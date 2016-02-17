@@ -48,9 +48,11 @@ namespace thruster_torque_and_differential_throttling
         private Dictionary<MyThrust, thruster_info> uncontrolled_thrusters = new Dictionary<MyThrust, thruster_info>();
         private List<MyThrust> shallow_copy = new List<MyThrust>();
 
-        private bool disposed = false;
-        private Vector3D grid_CoM_location;
-        private MatrixD inverse_world_transform;
+        private bool      disposed = false;
+        private Vector3D  grid_CoM_location;
+        private MatrixD   inverse_world_transform;
+        private FieldInfo max_gyro_torque_ref;
+        private float     max_gyro_torque = 0.0f, max_gyro_torque_squared = 0.0f;
 
         #endregion
 
@@ -132,6 +134,13 @@ namespace thruster_torque_and_differential_throttling
                     torque += cur_thruster.Value.max_torque * cur_thruster.Key.CurrentStrength;
             }
 
+            if (gyro_control.ControlTorque.LengthSquared() <= 0.0001f)
+            {
+                if (torque.LengthSquared() > max_gyro_torque_squared)
+                    torque -= Vector3.Normalize(torque) * max_gyro_torque;
+                else
+                    torque = Vector3.Zero;
+            }
             grid.Physics.AddForce(MyPhysicsForceType.ADD_BODY_FORCE_AND_BODY_TORQUE, Vector3.Zero, null, torque);
         }
 
@@ -283,6 +292,7 @@ namespace thruster_torque_and_differential_throttling
             this.grid = grid;
             grid.OnBlockAdded   += on_block_added;
             grid.OnBlockRemoved += on_block_removed;
+
             Type grid_systems_type = grid.GridSystems.GetType();
             PropertyInfo gyro_system_ref = grid_systems_type.GetProperty("GyroSystem", BindingFlags.Instance | BindingFlags.NonPublic);
             gyro_control = (MyGridGyroSystem) gyro_system_ref.GetValue(grid.GridSystems);
@@ -290,6 +300,9 @@ namespace thruster_torque_and_differential_throttling
             PropertyInfo terminal_system_ref = grid_systems_type.GetProperty("TerminalSystem", BindingFlags.Instance | BindingFlags.NonPublic);
             grid_control = (IMyGridTerminalSystem) terminal_system_ref.GetValue(grid.GridSystems);
             Debug.Assert(grid_control != null, "TT&DT engine_control_unit ERROR: grid_control == null");
+
+            Type gyro_system_type = gyro_control.GetType();
+            max_gyro_torque_ref   = gyro_system_type.GetField("m_maxGyroForce", BindingFlags.Instance | BindingFlags.NonPublic);
 
             inverse_world_transform = grid.PositionComp.WorldMatrixNormalizedInv;
             grid_CoM_location = Vector3D.Transform(grid.Physics.CenterOfMassWorld, inverse_world_transform);
@@ -334,18 +347,25 @@ namespace thruster_torque_and_differential_throttling
         {
             if (disposed)
                 throw new ObjectDisposedException("ECU for grid \"" + grid.DisplayName + "\" [" + grid.EntityId.ToString() + "] is no longer functional.");
+            if (grid.IsStatic || grid.Physics == null || thrust_control == null)
+                return;
             var current_grid_CoM = Vector3D.Transform(grid.Physics.CenterOfMassWorld, inverse_world_transform);
             if ((current_grid_CoM - grid_CoM_location).LengthSquared() > 0.01f)
             {
                 grid_CoM_location = current_grid_CoM;
                 refresh_thruster_info();
             }
+            max_gyro_torque         = (float) max_gyro_torque_ref.GetValue(gyro_control);
+            max_gyro_torque_squared = max_gyro_torque * max_gyro_torque;
+            screen_text("handle_4Hz", string.Format("ROT = {0}, LIN = {1}", gyro_control.ControlTorque, thrust_control.ControlThrust), 200);
         }
 
         public void handle_2s_period()
         {
             if (disposed)
                 throw new ObjectDisposedException("ECU for grid \"" + grid.DisplayName + "\" [" + grid.EntityId.ToString() + "] is no longer functional.");
+            if (grid.IsStatic || grid.Physics == null || thrust_control == null)
+                return;
             check_thruster_control_changed();
         }
     }
