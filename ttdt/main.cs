@@ -6,12 +6,44 @@ using System.Text;
 using System.Threading.Tasks;
 
 using Sandbox.Game.Entities;
+using VRage.Game.Components;
 using VRage.Game.Entity;
 using VRage.Plugins;
 using VRage.Utils;
+using Sandbox.Common.ObjectBuilders;
 
 namespace thruster_torque_and_differential_throttling
 {
+    [MySessionComponentDescriptor(MyUpdateOrder.BeforeSimulation)]
+    public class core_clock: MySessionComponentBase
+    {
+        private int counter15, counter8;
+
+        public override void Init(MyObjectBuilder_SessionComponent dummy)
+        {
+            base.Init(dummy);
+            counter15 = 15;
+            counter8  = 8;
+            MyLog.Default.WriteLine("TT&DT core_clock.Init() finished");
+        }
+
+        public override void UpdateBeforeSimulation()
+        {
+            base.UpdateBeforeSimulation();
+            grid_manager.handle_60Hz();
+            if (--counter15 <= 0)
+            {
+                grid_manager.handle_4Hz();
+                counter15 = 15;
+                if (--counter8 <= 0)
+                {
+                    grid_manager.handle_2s_period();
+                    counter8 = 8;
+                }
+            }
+        }
+    }
+
     public class main: IPlugin
     {
         #region Private methods

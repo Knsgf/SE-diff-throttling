@@ -18,15 +18,17 @@ namespace thruster_torque_and_differential_throttling
 {
     class engine_control_unit: IDisposable
     {
+        #region fields
+
         enum thrust_dir { fore = 0, aft = 1, starboard = 2, port = 3, dorsal = 4, ventral = 5 };
         struct thruster_info
         {
             public MyThrust thruster_ref;
-            public Vector3 max_force;
-            public Vector3 max_torque;
-            public Vector3 grid_centre_pos;
-            public Vector3 static_moment;
-            public Vector3 CoM_offset;
+            public float    max_force;
+            public Vector3  max_torque;
+            public Vector3  grid_centre_pos;
+            public Vector3  static_moment;
+            public Vector3  CoM_offset;
         };
 
         private MyCubeGrid              grid;
@@ -42,11 +44,15 @@ namespace thruster_torque_and_differential_throttling
             new Dictionary<MyThrust, thruster_info>(),   // dorsal
             new Dictionary<MyThrust, thruster_info>()    // ventral
         };
+        private float[] max_force = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
         private Dictionary<MyThrust, thruster_info> uncontrolled_thrusters = new Dictionary<MyThrust, thruster_info>();
+        private List<MyThrust> shallow_copy = new List<MyThrust>();
 
         private bool disposed = false;
         private Vector3D grid_CoM_location;
         private MatrixD inverse_world_transform;
+
+        #endregion
 
         [Conditional("DEBUG")]
         private void log_ECU_action(string method_name, string message)
@@ -57,14 +63,16 @@ namespace thruster_torque_and_differential_throttling
                 num_controlled_thrusters += cur_direction.Count;
             MyLog.Default.WriteLine(string.Format("TT&DT \t\ttotal thrusters: {0} ({1}/{2}/{3}/{4}/{5}/{6} controlled, {7} uncontrolled)", 
                 uncontrolled_thrusters.Count + num_controlled_thrusters,
-                controlled_thrusters[(int)thrust_dir.fore     ].Count,
-                controlled_thrusters[(int)thrust_dir.aft      ].Count,
-                controlled_thrusters[(int)thrust_dir.starboard].Count,
-                controlled_thrusters[(int)thrust_dir.port     ].Count,
-                controlled_thrusters[(int)thrust_dir.dorsal   ].Count,
-                controlled_thrusters[(int)thrust_dir.ventral  ].Count,
+                controlled_thrusters[(int) thrust_dir.fore     ].Count,
+                controlled_thrusters[(int) thrust_dir.aft      ].Count,
+                controlled_thrusters[(int) thrust_dir.starboard].Count,
+                controlled_thrusters[(int) thrust_dir.port     ].Count,
+                controlled_thrusters[(int) thrust_dir.dorsal   ].Count,
+                controlled_thrusters[(int) thrust_dir.ventral  ].Count,
                 uncontrolled_thrusters.Count));
         }
+
+        #region thruster manager
 
         private thrust_dir get_nozzle_orientation(MyThrust thruster)
         {
@@ -84,15 +92,63 @@ namespace thruster_torque_and_differential_throttling
             throw new ArgumentException("Thruster " + thruster.CustomName  + " is not grid-aligned");
         }
 
+        private void check_thruster_control_changed()
+        {
+            bool changes_made = false;
+            int  dir_index;
+
+            for (dir_index = 0; dir_index < 6; ++dir_index)
+            {
+                Dictionary<MyThrust, thruster_info> cur_direction = controlled_thrusters[dir_index];
+                shallow_copy.Clear();
+                shallow_copy.AddRange(cur_direction.Keys);
+                foreach (var cur_thruster in shallow_copy)
+                {
+                    if (!cur_thruster.IsWorking || !cur_thruster.CustomName.ToString().ToUpper().Contains("[RCS]"))
+                    {
+                        max_force[dir_index] -= cur_direction[cur_thruster].max_force;
+                        uncontrolled_thrusters.Add(cur_thruster, cur_direction[cur_thruster]);
+                        cur_direction.Remove(cur_thruster);
+                        changes_made = true;
+                    }
+                }
+            }
+
+            shallow_copy.Clear();
+            shallow_copy.AddRange(uncontrolled_thrusters.Keys);
+            foreach (var cur_thruster in shallow_copy)
+            {
+                if (cur_thruster.IsWorking && cur_thruster.CustomName.ToString().ToUpper().Contains("[RCS]"))
+                {
+                    dir_index = (int) get_nozzle_orientation(cur_thruster);
+                    controlled_thrusters[dir_index].Add(cur_thruster, uncontrolled_thrusters[cur_thruster]);
+                    uncontrolled_thrusters.Remove(cur_thruster);
+                    max_force[dir_index] += controlled_thrusters[dir_index][cur_thruster].max_force;
+                    changes_made = true;
+                }
+            }
+
+            if (changes_made)
+            {
+                log_ECU_action("check_thruster_control_changed", string.Format("{0}/{1}/{2}/{3}/{4}/{5} kN",
+                    max_force[(int) thrust_dir.fore     ] / 1000.0f,
+                    max_force[(int) thrust_dir.aft      ] / 1000.0f,
+                    max_force[(int) thrust_dir.starboard] / 1000.0f,
+                    max_force[(int) thrust_dir.port     ] / 1000.0f,
+                    max_force[(int) thrust_dir.dorsal   ] / 1000.0f,
+                    max_force[(int) thrust_dir.ventral  ] / 1000.0f));
+            }
+        }
+
         private void assign_thruster(MyThrust thruster)
         {
             var new_thruster = new thruster_info();
             new_thruster.thruster_ref    = thruster;
             new_thruster.grid_centre_pos = (thruster.Min + thruster.Max) * (grid.GridSize / 2.0f);
-            new_thruster.max_force       = thruster.ThrustForce;
-            new_thruster.static_moment   = new_thruster.grid_centre_pos * new_thruster.max_force.Length();
+            new_thruster.max_force       = thruster.ThrustForce.Length();
+            new_thruster.static_moment   = new_thruster.grid_centre_pos * new_thruster.max_force;
             new_thruster.CoM_offset      = new_thruster.grid_centre_pos - grid_CoM_location;
-            new_thruster.max_torque      = Vector3.Cross(new_thruster.CoM_offset, new_thruster.max_force);
+            new_thruster.max_torque      = Vector3.Cross(new_thruster.CoM_offset, thruster.ThrustForce);
             uncontrolled_thrusters.Add(thruster, new_thruster);
             log_ECU_action("assign_thruster", string.Format("{0} ({1}) [{2}]\n\t\t\tCentre position: {3}\n\t\t\tOffset from CoM: {4} ({5} m)\n\t\t\tMaximum torque: {6} MN*m", 
                 thruster.CustomName, get_nozzle_orientation(thruster).ToString(), thruster.EntityId, 
@@ -194,6 +250,13 @@ namespace thruster_torque_and_differential_throttling
                 disposed = true;
                 log_ECU_action("Dispose", string.Format("ECU for grid {0} [{1}] has been disposed", grid.DisplayName, grid.EntityId));
             }
+        }
+
+        #endregion
+
+        public void handle_2s_period()
+        {
+            check_thruster_control_changed();
         }
     }
 }
