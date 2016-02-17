@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Diagnostics;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -14,6 +15,8 @@ namespace thruster_torque_and_differential_throttling
     public class main: IPlugin
     {
         #region Private methods
+
+        [Conditional("DEBUG")]
         private static void log_event(string event_name, MyEntity entity)
         {
             MyLog.Default.WriteLine(string.Format("TT&DT main.{0}(): {1} {2} \"{3}\" [{4}]", event_name, entity, entity.Name, entity.DisplayName, entity.EntityId));
@@ -42,6 +45,7 @@ namespace thruster_torque_and_differential_throttling
             if (cube_grid != null)
                 grid_manager.remove_grid(cube_grid);
         }
+
         #endregion
 
         public void Dispose()
