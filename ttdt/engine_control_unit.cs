@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-//using System.Linq;
+using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
@@ -11,6 +11,7 @@ using Sandbox.Game.Entities.Cube;
 using Sandbox.Game.GameSystems;
 using Sandbox.ModAPI.Ingame;
 using Sandbox.ModAPI.Interfaces;
+using VRage.Game.Components;
 using VRage.Utils;
 using VRageMath;
 
@@ -23,7 +24,6 @@ namespace thruster_torque_and_differential_throttling
         enum thrust_dir { fore = 0, aft = 1, starboard = 2, port = 3, dorsal = 4, ventral = 5 };
         struct thruster_info
         {
-            public MyThrust thruster_ref;
             public float    max_force;
             public Vector3  max_torque;
             public Vector3  grid_centre_pos;
@@ -54,6 +54,7 @@ namespace thruster_torque_and_differential_throttling
 
         #endregion
 
+        #region DEBUG
         [Conditional("DEBUG")]
         private void log_ECU_action(string method_name, string message)
         {
@@ -71,6 +72,70 @@ namespace thruster_torque_and_differential_throttling
                 controlled_thrusters[(int) thrust_dir.ventral  ].Count,
                 uncontrolled_thrusters.Count));
         }
+
+        [Conditional("DEBUG")]
+        private void screen_text(string method_name, string message, int display_time_ms)
+        {
+            Sandbox.ModAPI.MyAPIGateway.Utilities.ShowNotification(string.Format("engine_control_unit.{0}(): {1}", method_name, message), display_time_ms);
+        }
+
+        #endregion
+
+        #region torque calculation
+
+        private void refresh_thruster_info()
+        {
+            thruster_info cur_thruster_info;
+
+            foreach (var cur_direction in controlled_thrusters)
+            {
+                shallow_copy.Clear();
+                shallow_copy.AddRange(cur_direction.Keys);
+                foreach (var cur_thruster in shallow_copy)
+                {
+                    cur_thruster_info               = cur_direction[cur_thruster];
+                    cur_thruster_info.CoM_offset    = cur_thruster_info.grid_centre_pos - grid_CoM_location;
+                    cur_thruster_info.max_torque    = Vector3.Cross(cur_thruster_info.CoM_offset, cur_thruster.ThrustForce);
+                    cur_direction[cur_thruster]     = cur_thruster_info;
+                }
+            }
+
+            shallow_copy.Clear();
+            shallow_copy.AddRange(uncontrolled_thrusters.Keys);
+            foreach (var cur_thruster in shallow_copy)
+            {
+                cur_thruster_info                    = uncontrolled_thrusters[cur_thruster];
+                cur_thruster_info.CoM_offset         = cur_thruster_info.grid_centre_pos - grid_CoM_location;
+                cur_thruster_info.max_torque         = Vector3.Cross(cur_thruster_info.CoM_offset, cur_thruster.ThrustForce);
+                uncontrolled_thrusters[cur_thruster] = cur_thruster_info;
+            }
+
+            screen_text("refresh_thruster_info", grid.DisplayName, 5000);
+        }
+
+        private void calculate_and_apply_torque()
+        {
+            Vector3 torque = Vector3.Zero;
+
+            foreach (var cur_direction in controlled_thrusters)
+            {
+                foreach (var cur_thruster in cur_direction)
+                {
+                    if (cur_thruster.Key.IsWorking)
+                        torque += cur_thruster.Value.max_torque * cur_thruster.Key.CurrentStrength;
+                }
+            }
+
+            foreach (var cur_thruster in uncontrolled_thrusters)
+            {
+                if (cur_thruster.Key.IsWorking)
+                    torque += cur_thruster.Value.max_torque * cur_thruster.Key.CurrentStrength;
+            }
+
+            grid.Physics.AddForce(MyPhysicsForceType.ADD_BODY_FORCE_AND_BODY_TORQUE, Vector3.Zero, null, torque);
+        }
+
+        #endregion
 
         #region thruster manager
 
@@ -143,7 +208,6 @@ namespace thruster_torque_and_differential_throttling
         private void assign_thruster(MyThrust thruster)
         {
             var new_thruster = new thruster_info();
-            new_thruster.thruster_ref    = thruster;
             new_thruster.grid_centre_pos = (thruster.Min + thruster.Max) * (grid.GridSize / 2.0f);
             new_thruster.max_force       = thruster.ThrustForce.Length();
             new_thruster.static_moment   = new_thruster.grid_centre_pos * new_thruster.max_force;
@@ -226,7 +290,6 @@ namespace thruster_torque_and_differential_throttling
             PropertyInfo terminal_system_ref = grid_systems_type.GetProperty("TerminalSystem", BindingFlags.Instance | BindingFlags.NonPublic);
             grid_control = (IMyGridTerminalSystem) terminal_system_ref.GetValue(grid.GridSystems);
             Debug.Assert(grid_control != null, "TT&DT engine_control_unit ERROR: grid_control == null");
-            thrust_control = grid.Components.Get<MyEntityThrustComponent>();
 
             inverse_world_transform = grid.PositionComp.WorldMatrixNormalizedInv;
             grid_CoM_location = Vector3D.Transform(grid.Physics.CenterOfMassWorld, inverse_world_transform);
@@ -254,8 +317,35 @@ namespace thruster_torque_and_differential_throttling
 
         #endregion
 
+        public void handle_60Hz()
+        {
+            if (disposed)
+                throw new ObjectDisposedException("ECU for grid \"" + grid.DisplayName + "\" [" + grid.EntityId.ToString() + "] is no longer functional.");
+            inverse_world_transform = grid.PositionComp.WorldMatrixNormalizedInv;
+            if (!grid.IsStatic && grid.Physics != null)
+            {
+                thrust_control = grid.Components.Get<MyEntityThrustComponent>();
+                if (thrust_control != null)
+                    calculate_and_apply_torque();
+            }
+        }
+
+        public void handle_4Hz()
+        {
+            if (disposed)
+                throw new ObjectDisposedException("ECU for grid \"" + grid.DisplayName + "\" [" + grid.EntityId.ToString() + "] is no longer functional.");
+            var current_grid_CoM = Vector3D.Transform(grid.Physics.CenterOfMassWorld, inverse_world_transform);
+            if ((current_grid_CoM - grid_CoM_location).LengthSquared() > 0.01f)
+            {
+                grid_CoM_location = current_grid_CoM;
+                refresh_thruster_info();
+            }
+        }
+
         public void handle_2s_period()
         {
+            if (disposed)
+                throw new ObjectDisposedException("ECU for grid \"" + grid.DisplayName + "\" [" + grid.EntityId.ToString() + "] is no longer functional.");
             check_thruster_control_changed();
         }
     }
