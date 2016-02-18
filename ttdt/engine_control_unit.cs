@@ -49,6 +49,7 @@ namespace thruster_torque_and_differential_throttling
         private float[] max_force        = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
         private float[] control_vector   = new float[6];
         private float[] braking_vector   = new float[6];
+        private float[] desired_force    = new float[6];
         private  bool[] dampers_disabled = { false, false, false, false, false, false };
         private Dictionary<MyThrust, thruster_info> uncontrolled_thrusters = new Dictionary<MyThrust, thruster_info>();
         private List<MyThrust> shallow_copy = new List<MyThrust>();
@@ -199,20 +200,50 @@ namespace thruster_torque_and_differential_throttling
             }
         }
 
+        void adjust_thrust_for_rotation(int cur_dir, int opposite_dir, Vector3 desired_angular_velocity)
+        {
+            const float DAMPING_CONSTANT = 10.0f;
+
+            Vector3 desired_force_vector;
+            float   desired_setting;
+
+            foreach (var cur_thruster in controlled_thrusters[cur_dir])
+            {
+                desired_force_vector = Vector3.Cross(desired_angular_velocity - local_angular_velocity, cur_thruster.Value.CoM_offset);
+                decompose_vector(desired_force_vector, desired_force);
+                if (desired_force[cur_dir] > 0.0f)
+                {
+                    desired_setting = DAMPING_CONSTANT * grid.Physics.Mass * desired_force[cur_dir] / max_force[cur_dir];
+                    cur_thruster.Value.current_setting += desired_setting;
+                    if (cur_thruster.Value.current_setting > 1.0f)
+                        cur_thruster.Value.current_setting = 1.0f;
+                }
+                else if (desired_force[opposite_dir] > 0.0f)
+                {
+                    desired_setting = DAMPING_CONSTANT * grid.Physics.Mass * desired_force[opposite_dir] / max_force[opposite_dir];
+                    cur_thruster.Value.current_setting -= desired_setting;
+                    if (cur_thruster.Value.current_setting < 0.0f)
+                        cur_thruster.Value.current_setting = 0.0f;
+                }
+            }
+        }
+
         private void handle_thrust_control()
         {
             const float DAMPING_CONSTANT = -2.0f;
 
-            Matrix  inverse_world_rotation = inverse_world_transform.GetOrientation();
-            Vector3 local_linear_velocity  = Vector3.Transform(grid.Physics.LinearVelocity , inverse_world_rotation);
-            local_angular_velocity         = Vector3.Transform(grid.Physics.AngularVelocity, inverse_world_rotation);
+            int     opposite_dir;
+            Matrix  inverse_world_rotation   = inverse_world_transform.GetOrientation();
+            Vector3 local_linear_velocity    = Vector3.Transform(grid.Physics.LinearVelocity , inverse_world_rotation);
+            local_angular_velocity           = Vector3.Transform(grid.Physics.AngularVelocity, inverse_world_rotation);
+            Vector3 desired_angular_velocity = gyro_control.ControlTorque * 10.0f;
             speed = local_linear_velocity.Length();
 
             decompose_vector(thrust_control.ControlThrust, control_vector);
             if (thrust_control.DampenersEnabled)
             {
                 decompose_vector(local_linear_velocity * (grid.Physics.Mass * DAMPING_CONSTANT), braking_vector);
-                int opposite_dir = 3;
+                opposite_dir = 3;
                 for (int dir_index = 0; dir_index < 6; ++dir_index)
                 {
                     if (!dampers_disabled[dir_index] && max_force[dir_index] > 0.0f && control_vector[opposite_dir] < 0.01f)
@@ -226,10 +257,15 @@ namespace thruster_torque_and_differential_throttling
                 }
             }
 
+            opposite_dir = 3;
             for (int dir_index = 0; dir_index < 6; ++dir_index)
             {
                 foreach (var cur_thruster in controlled_thrusters[dir_index])
                     cur_thruster.Value.current_setting = control_vector[dir_index];
+                if (!dampers_disabled[dir_index] && control_vector[opposite_dir] < 0.01f)
+                    adjust_thrust_for_rotation(dir_index, opposite_dir, desired_angular_velocity);
+                if (++opposite_dir >= 6)
+                    opposite_dir = 0;
             }
 
             apply_thrust_settings();
