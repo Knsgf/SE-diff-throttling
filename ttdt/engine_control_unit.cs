@@ -24,11 +24,12 @@ namespace thruster_torque_and_differential_throttling
         enum thrust_dir { fore = 0, aft = 1, starboard = 2, port = 3, dorsal = 4, ventral = 5 };
         struct thruster_info
         {
-            public float    max_force;
-            public Vector3  max_torque;
-            public Vector3  grid_centre_pos;
-            public Vector3  static_moment;
-            public Vector3  CoM_offset;
+            public float      max_force;
+            public Vector3    max_torque;
+            public Vector3    grid_centre_pos;
+            public Vector3    static_moment;
+            public Vector3    CoM_offset;
+            public thrust_dir nozzle_direction;
         };
 
         private MyCubeGrid              grid;
@@ -45,6 +46,7 @@ namespace thruster_torque_and_differential_throttling
             new Dictionary<MyThrust, thruster_info>()    // ventral
         };
         private float[] max_force = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+        private bool[] dampers_disabled = { false, false, false, false, false, false };
         private Dictionary<MyThrust, thruster_info> uncontrolled_thrusters = new Dictionary<MyThrust, thruster_info>();
         private List<MyThrust> shallow_copy = new List<MyThrust>();
 
@@ -97,7 +99,7 @@ namespace thruster_torque_and_differential_throttling
                 {
                     cur_thruster_info               = cur_direction[cur_thruster];
                     cur_thruster_info.CoM_offset    = cur_thruster_info.grid_centre_pos - grid_CoM_location;
-                    cur_thruster_info.max_torque    = Vector3.Cross(cur_thruster_info.CoM_offset, cur_thruster.ThrustForce);
+                    cur_thruster_info.max_torque    = Vector3.Cross(cur_thruster_info.CoM_offset, -cur_thruster.ThrustForwardVector * cur_thruster.BlockDefinition.ForceMagnitude);
                     cur_direction[cur_thruster]     = cur_thruster_info;
                 }
             }
@@ -108,11 +110,32 @@ namespace thruster_torque_and_differential_throttling
             {
                 cur_thruster_info                    = uncontrolled_thrusters[cur_thruster];
                 cur_thruster_info.CoM_offset         = cur_thruster_info.grid_centre_pos - grid_CoM_location;
-                cur_thruster_info.max_torque         = Vector3.Cross(cur_thruster_info.CoM_offset, cur_thruster.ThrustForce);
+                cur_thruster_info.max_torque         = Vector3.Cross(cur_thruster_info.CoM_offset, -cur_thruster.ThrustForwardVector * cur_thruster.BlockDefinition.ForceMagnitude);
                 uncontrolled_thrusters[cur_thruster] = cur_thruster_info;
             }
 
             screen_text("refresh_thruster_info", grid.DisplayName, 5000);
+        }
+
+        private void check_override_on_uncontrolled()
+        {
+            for (int dir_index = 0; dir_index < 6; ++dir_index)
+            {
+                dampers_disabled[dir_index] = false;
+            }
+            foreach (var cur_thruster in uncontrolled_thrusters)
+            {
+                if (cur_thruster.Key.ThrustOverride > cur_thruster.Value.max_force * 0.01f)
+                    dampers_disabled[(int) cur_thruster.Value.nozzle_direction] = true;
+            }
+            screen_text("check_override_on_uncontrolled", string.Format("{0}/{1}/{2}/{3}/{4}/{5}",
+                    dampers_disabled[(int) thrust_dir.fore     ],
+                    dampers_disabled[(int) thrust_dir.aft      ],
+                    dampers_disabled[(int) thrust_dir.starboard],
+                    dampers_disabled[(int) thrust_dir.port     ],
+                    dampers_disabled[(int) thrust_dir.dorsal   ],
+                    dampers_disabled[(int) thrust_dir.ventral  ]
+                ), 5000);
         }
 
         private void calculate_and_apply_torque()
@@ -148,6 +171,12 @@ namespace thruster_torque_and_differential_throttling
 
         #region thruster manager
 
+        private void on_thrust_override_changed(float setting)
+        {
+            check_override_on_uncontrolled();
+            //screen_text("on_thrust_override_changed", setting.ToString(), 5000);
+        }
+
         private thrust_dir get_nozzle_orientation(MyThrust thruster)
         {
             Vector3I dir_vector = thruster.ThrustForwardVector;
@@ -182,6 +211,7 @@ namespace thruster_torque_and_differential_throttling
                     {
                         max_force[dir_index] -= cur_direction[cur_thruster].max_force;
                         uncontrolled_thrusters.Add(cur_thruster, cur_direction[cur_thruster]);
+                        cur_thruster.ThrustOverrideChanged += on_thrust_override_changed;
                         cur_direction.Remove(cur_thruster);
                         changes_made = true;
                     }
@@ -194,8 +224,9 @@ namespace thruster_torque_and_differential_throttling
             {
                 if (cur_thruster.IsWorking && cur_thruster.CustomName.ToString().ToUpper().Contains("[RCS]"))
                 {
-                    dir_index = (int) get_nozzle_orientation(cur_thruster);
+                    dir_index = (int) uncontrolled_thrusters[cur_thruster].nozzle_direction;
                     controlled_thrusters[dir_index].Add(cur_thruster, uncontrolled_thrusters[cur_thruster]);
+                    cur_thruster.ThrustOverrideChanged -= on_thrust_override_changed;
                     uncontrolled_thrusters.Remove(cur_thruster);
                     max_force[dir_index] += controlled_thrusters[dir_index][cur_thruster].max_force;
                     changes_made = true;
@@ -204,6 +235,7 @@ namespace thruster_torque_and_differential_throttling
 
             if (changes_made)
             {
+                check_override_on_uncontrolled();
                 log_ECU_action("check_thruster_control_changed", string.Format("{0}/{1}/{2}/{3}/{4}/{5} kN",
                     max_force[(int) thrust_dir.fore     ] / 1000.0f,
                     max_force[(int) thrust_dir.aft      ] / 1000.0f,
@@ -217,14 +249,16 @@ namespace thruster_torque_and_differential_throttling
         private void assign_thruster(MyThrust thruster)
         {
             var new_thruster = new thruster_info();
-            new_thruster.grid_centre_pos = (thruster.Min + thruster.Max) * (grid.GridSize / 2.0f);
-            new_thruster.max_force       = thruster.ThrustForce.Length();
-            new_thruster.static_moment   = new_thruster.grid_centre_pos * new_thruster.max_force;
-            new_thruster.CoM_offset      = new_thruster.grid_centre_pos - grid_CoM_location;
-            new_thruster.max_torque      = Vector3.Cross(new_thruster.CoM_offset, thruster.ThrustForce);
+            new_thruster.grid_centre_pos  = (thruster.Min + thruster.Max) * (grid.GridSize / 2.0f);
+            new_thruster.max_force        = thruster.BlockDefinition.ForceMagnitude;
+            new_thruster.static_moment    = new_thruster.grid_centre_pos * new_thruster.max_force;
+            new_thruster.CoM_offset       = new_thruster.grid_centre_pos - grid_CoM_location;
+            new_thruster.max_torque       = Vector3.Cross(new_thruster.CoM_offset, -thruster.ThrustForwardVector * new_thruster.max_force);
+            new_thruster.nozzle_direction = get_nozzle_orientation(thruster);
             uncontrolled_thrusters.Add(thruster, new_thruster);
+            thruster.ThrustOverrideChanged += on_thrust_override_changed;
             log_ECU_action("assign_thruster", string.Format("{0} ({1}) [{2}]\n\t\t\tCentre position: {3}\n\t\t\tOffset from CoM: {4} ({5} m)\n\t\t\tMaximum torque: {6} MN*m", 
-                thruster.CustomName, get_nozzle_orientation(thruster).ToString(), thruster.EntityId, 
+                thruster.CustomName, new_thruster.nozzle_direction.ToString(), thruster.EntityId, 
                 new_thruster.grid_centre_pos, 
                 new_thruster.CoM_offset, new_thruster.CoM_offset.Length(), 
                 new_thruster.max_torque.Length() / 1E+6));
@@ -232,10 +266,11 @@ namespace thruster_torque_and_differential_throttling
 
         private void dispose_thruster(MyThrust thruster)
         {
-            bool thruster_found = false;
+            bool thruster_found = false, uncontrolled_thruster_removed = false;
+            thruster.ThrustOverrideChanged -= on_thrust_override_changed;
             if (uncontrolled_thrusters.ContainsKey(thruster))
             {
-                thruster_found = true;
+                thruster_found = uncontrolled_thruster_removed = true;
                 uncontrolled_thrusters.Remove(thruster);
                 log_ECU_action("dispose_thruster", string.Format("{0} ({1}) [{2}]", thruster.CustomName, get_nozzle_orientation(thruster).ToString(), thruster.EntityId));
             }
@@ -252,6 +287,8 @@ namespace thruster_torque_and_differential_throttling
                     }
                 }
             }
+            if (uncontrolled_thruster_removed)
+                check_override_on_uncontrolled();
             Debug.Assert(thruster_found, "TT&DT engine_control_unit.dispose_thruster ERROR: " + thruster.CustomName + " [" + thruster.EntityId + "] hasn't been registered");
         }
 
@@ -357,7 +394,7 @@ namespace thruster_torque_and_differential_throttling
             }
             max_gyro_torque         = (float) max_gyro_torque_ref.GetValue(gyro_control);
             max_gyro_torque_squared = max_gyro_torque * max_gyro_torque;
-            screen_text("handle_4Hz", string.Format("ROT = {0}, LIN = {1}", gyro_control.ControlTorque, thrust_control.ControlThrust), 200);
+            //screen_text("handle_4Hz", string.Format("ROT = {0}, LIN = {1}", gyro_control.ControlTorque, thrust_control.ControlThrust), 200);
         }
 
         public void handle_2s_period()
