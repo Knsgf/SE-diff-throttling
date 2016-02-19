@@ -32,6 +32,7 @@ namespace thruster_torque_and_differential_throttling
             public Vector3    reference_vector;
             public thrust_dir nozzle_direction;
             public float      current_setting;
+            public int        prev_setting;
         };
 
         private MyCubeGrid              grid;
@@ -203,9 +204,13 @@ namespace thruster_torque_and_differential_throttling
                     if (!cur_thruster.Key.IsWorking)
                         continue;
                     setting = cur_thruster.Value.current_setting * 100.0f;
-                    if (setting < MIN_OVERRIDE && speed > 0.1f)
+                    if (setting < MIN_OVERRIDE && speed > 1.0f)
                         setting = MIN_OVERRIDE;
-                    cur_thruster.Key.SetValueFloat("Override", setting);
+                    if ((int) setting != cur_thruster.Value.prev_setting)
+                    {
+                        cur_thruster.Key.SetValueFloat("Override", setting);
+                        cur_thruster.Value.prev_setting = (int) setting;
+                    }
                 }
             }
         }
