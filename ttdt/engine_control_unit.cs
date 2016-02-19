@@ -65,6 +65,8 @@ namespace thruster_torque_and_differential_throttling
         private Vector3   local_angular_velocity;
         private float     speed;
         private bool      current_mode_is_steady_velocity = false, new_mode_is_steady_velocity = false;
+        private Vector3   desired_angular_velocity, captured_angular_velocity;
+        private bool      enable_integral = false, reset_integral = false, are_gyroscopes_saturated = false;
 
         #endregion
 
@@ -90,7 +92,7 @@ namespace thruster_torque_and_differential_throttling
         [Conditional("DEBUG")]
         private void screen_text(string method_name, string message, int display_time_ms)
         {
-            Sandbox.ModAPI.MyAPIGateway.Utilities.ShowNotification(string.Format("engine_control_unit.{0}(): {1}", method_name, message), display_time_ms);
+            Sandbox.ModAPI.MyAPIGateway.Utilities.ShowNotification(string.Format("engine_control_unit.{0}(): \"{1}\" {2}", method_name, grid.DisplayName, message), display_time_ms);
         }
 
         #endregion
@@ -118,7 +120,7 @@ namespace thruster_torque_and_differential_throttling
                 cur_thruster_info.max_torque = Vector3.Cross(cur_thruster_info.CoM_offset, -cur_thruster.Key.ThrustForwardVector * cur_thruster.Key.BlockDefinition.ForceMagnitude);
             }
 
-            screen_text("refresh_thruster_info", grid.DisplayName, 5000);
+            //screen_text("refresh_thruster_info", grid.DisplayName, 5000);
         }
 
         private void check_override_on_uncontrolled()
@@ -132,6 +134,7 @@ namespace thruster_torque_and_differential_throttling
                 if (cur_thruster.Key.ThrustOverride > cur_thruster.Value.max_force * 0.01f)
                     dampers_disabled[(int) cur_thruster.Value.nozzle_direction] = true;
             }
+            /*
             screen_text("check_override_on_uncontrolled", string.Format("{0}/{1}/{2}/{3}/{4}/{5}",
                     dampers_disabled[(int) thrust_dir.fore     ],
                     dampers_disabled[(int) thrust_dir.aft      ],
@@ -140,6 +143,7 @@ namespace thruster_torque_and_differential_throttling
                     dampers_disabled[(int) thrust_dir.dorsal   ],
                     dampers_disabled[(int) thrust_dir.ventral  ]
                 ), 5000);
+            */
         }
 
         private void calculate_and_apply_torque()
@@ -161,13 +165,15 @@ namespace thruster_torque_and_differential_throttling
                     torque += cur_thruster.Value.max_torque * cur_thruster.Key.CurrentStrength;
             }
 
+            are_gyroscopes_saturated = torque.LengthSquared() / max_gyro_torque_squared > 0.75f * 0.75f;
             if (gyro_control.ControlTorque.LengthSquared() <= 0.0001f && Vector3.Dot(torque, local_angular_velocity) >= 0.0f)
             {
-                if (torque.LengthSquared() > max_gyro_torque_squared)
-                    torque -= Vector3.Normalize(torque) * max_gyro_torque;
+                if (torque.LengthSquared() <= max_gyro_torque_squared)
+                    torque  = Vector3.Zero;
                 else
-                    torque = Vector3.Zero;
+                    torque -= Vector3.Normalize(torque) * max_gyro_torque;
             }
+            //screen_text("calculate_and_apply_torque", string.Format(" gyro saturated: {0}", are_gyroscopes_saturated ? "yes" : "no"), 20);
             grid.Physics.AddForce(MyPhysicsForceType.ADD_BODY_FORCE_AND_BODY_TORQUE, Vector3.Zero, null, torque);
         }
 
@@ -243,7 +249,6 @@ namespace thruster_torque_and_differential_throttling
                 decompose_vector(desired_force_vector, desired_force);
                 if (desired_force[cur_dir] > 0.0f)
                 {
-                    Debug.Assert(max_force[cur_dir] > 0.0f);
                     desired_setting = DAMPING_CONSTANT * grid.Physics.Mass * desired_force[cur_dir] / max_force[cur_dir];
                     cur_thruster.Value.current_setting += desired_setting;
                     if (cur_thruster.Value.current_setting > 1.0f)
@@ -251,7 +256,6 @@ namespace thruster_torque_and_differential_throttling
                 }
                 else if (desired_force[opposite_dir] > 0.0f)
                 {
-                    Debug.Assert(max_force[cur_dir] > 0.0f);
                     desired_setting = DAMPING_CONSTANT * grid.Physics.Mass * desired_force[opposite_dir] / max_force[cur_dir];
                     cur_thruster.Value.current_setting -= desired_setting;
                     if (cur_thruster.Value.current_setting < 0.0f)
@@ -275,14 +279,14 @@ namespace thruster_torque_and_differential_throttling
                     new_force_ratio = (actual_force[opposite_dir] + requested_force[dir_index]) / actual_force[dir_index];
                     foreach (var cur_thruster in controlled_thrusters[dir_index])
                         cur_thruster.Value.current_setting *= new_force_ratio;
-                    screen_text("normalise_thrust", string.Format("force ratio ({0}) = {1}", (thrust_dir) dir_index, new_force_ratio), 20);
+                    //screen_text("normalise_thrust", string.Format("force ratio ({0}) = {1}", (thrust_dir) dir_index, new_force_ratio), 20);
                 }
                 if (actual_force[opposite_dir] - requested_force[opposite_dir] > actual_force[dir_index] + 0.001f)
                 {
                     new_force_ratio = (actual_force[dir_index] + requested_force[opposite_dir]) / actual_force[opposite_dir];
                     foreach (var cur_thruster in controlled_thrusters[opposite_dir])
                         cur_thruster.Value.current_setting *= new_force_ratio;
-                    screen_text("normalise_thrust", string.Format("force ratio ({0}) = {1}", (thrust_dir) opposite_dir, new_force_ratio), 20);
+                    //screen_text("normalise_thrust", string.Format("force ratio ({0}) = {1}", (thrust_dir) opposite_dir, new_force_ratio), 20);
                 }
                 ++opposite_dir;
             }
@@ -290,17 +294,43 @@ namespace thruster_torque_and_differential_throttling
 
         private void handle_thrust_control()
         {
-            const float MIN_ACCELERATION_MODE_ACC = 0.1f;
+            const float MIN_ACCELERATION_MODE_ACC = 0.2f, ANGULAR_INTEGRAL_COEFF = -0.05f;
 
             int opposite_dir;
             Matrix  inverse_world_rotation   = inverse_world_transform.GetOrientation();
             Vector3 local_linear_velocity    = Vector3.Transform(grid.Physics.LinearVelocity , inverse_world_rotation);
             local_angular_velocity           = Vector3.Transform(grid.Physics.AngularVelocity, inverse_world_rotation);
-            Vector3 desired_angular_velocity = gyro_control.ControlTorque * 10.0f;
             Vector3 requested_force_vector   = Vector3.Zero;
             speed = local_linear_velocity.Length();
 
             initialise_linear_controls(local_linear_velocity);
+
+            if (gyro_control.ControlTorque.LengthSquared() > 0.0001f)
+            {
+                desired_angular_velocity = gyro_control.ControlTorque * 15.0f;
+                enable_integral          = reset_integral = false;
+            }
+            else
+            {
+                if (reset_integral && Vector3.Dot(captured_angular_velocity, local_angular_velocity) <= 0.0f)
+                {
+                    desired_angular_velocity = captured_angular_velocity = Vector3.Zero;
+                    reset_integral = false;
+                }
+                else if (enable_integral)
+                {
+                    if (are_gyroscopes_saturated)
+                        desired_angular_velocity += local_angular_velocity * ANGULAR_INTEGRAL_COEFF;
+                    else
+                        desired_angular_velocity *= 0.9f;
+                }
+                else
+                {
+                    desired_angular_velocity  = Vector3.Zero;
+                    captured_angular_velocity = local_angular_velocity;
+                    reset_integral            = enable_integral = true;
+                }
+            }
 
             opposite_dir = 3;
             for (int dir_index = 0; dir_index < 6; ++dir_index)
@@ -310,7 +340,7 @@ namespace thruster_torque_and_differential_throttling
                     cur_thruster.Value.current_setting = control_vector[dir_index];
                     requested_force_vector += control_vector[dir_index] * cur_thruster.Key.ThrustForce;
                 }
-                if (!dampers_disabled[dir_index] && control_vector[opposite_dir] < 0.01f)
+                if (!dampers_disabled[dir_index] && max_force[dir_index] > 0.0f && control_vector[opposite_dir] < 0.01f)
                     adjust_thrust_for_rotation(dir_index, opposite_dir, desired_angular_velocity);
                 if (++opposite_dir >= 6)
                     opposite_dir = 0;
