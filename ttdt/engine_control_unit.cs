@@ -161,7 +161,10 @@ namespace thruster_torque_and_differential_throttling
                 else
                     torque -= Vector3.Normalize(torque) * _max_gyro_torque;
             }
-            _grid.Physics.AddForce(MyPhysicsForceType.ADD_BODY_FORCE_AND_BODY_TORQUE, Vector3.Zero, null, torque);
+            //if (_grid.Physics.IsWelded)
+            //    screen_text("calculate_and_apply_torque", "is welded", 20);
+            torque = Vector3.Transform(torque, _grid.WorldMatrix.GetOrientation());
+            _grid.Physics.AddForce(MyPhysicsForceType.APPLY_WORLD_IMPULSE_AND_WORLD_ANGULAR_IMPULSE, Vector3.Zero, null, torque);
         }
 
         #endregion
@@ -556,11 +559,11 @@ namespace thruster_torque_and_differential_throttling
             Debug.Assert(grid_control != null, "TT&DT engine_control_unit ERROR: grid_control == null");
 
             Type gyro_system_type = _gyro_control.GetType();
-            _max_gyro_torque_ref   = gyro_system_type.GetField("m_maxGyroForce", BindingFlags.Instance | BindingFlags.NonPublic);
+            _max_gyro_torque_ref  = gyro_system_type.GetField("m_maxGyroForce", BindingFlags.Instance | BindingFlags.NonPublic);
 
             _inverse_world_transform = grid.PositionComp.WorldMatrixNormalizedInv;
             _grid_CoM_location = Vector3D.Transform(grid.Physics.CenterOfMassWorld, _inverse_world_transform);
-            var thruster_list = new List<IMyTerminalBlock>();
+            var thruster_list  = new List<IMyTerminalBlock>();
             grid_control.GetBlocksOfType<IMyThrust>(thruster_list);
             foreach (var cur_thruster in thruster_list)
                 assign_thruster((MyThrust) cur_thruster);

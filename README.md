@@ -7,9 +7,7 @@ and automatic differential throttling to Space Engineers.
 * Unlike in earlier source modification, gyroscopes do not really stabilise the ship. Instead the plugin simply compares thruster torque with gyroscopes' 
   and reduces or discards the former accordingly,
 * Because this plugin uses thrust override, it is not recommended to enable differential throttling on the side of a ship that has 
-  hover engines, i. e. those meant to counteract gravity,
-* Torque doesn't apply correctly on ships locked via landing gear. Unfortunately, adding support for this requires linking against HavokWrapper,
-  and I'm not sure on whether it's legal to do so.
+  hover engines, i. e. those meant to counteract gravity.
   
 ## Installation
 1. Download and install Visual Studio 2015,
@@ -30,6 +28,6 @@ and automatic differential throttling to Space Engineers.
 4. Delete ttdt.dll in your SpaceEngineers\bin64 folder.
 
 ## Usage
-By default, all thrusters exert torque on a ship, but do not participate in control or stabilisation of the vessel.
+By default, all thrusters exert torque on a ship, but do not participate in steering or stabilisation of the vessel.
 To assign a thruster to engine control, open Control Panel and add [RCS] text anywhere in thuster's name. 
 The plugin is case-insensitive, so [RCS] and [rcs] will both work.
