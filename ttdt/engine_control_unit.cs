@@ -195,16 +195,19 @@ namespace thruster_torque_and_differential_throttling
         private void apply_thrust_settings()
         {
             const float MIN_OVERRIDE = 2.0f;
-            float setting;
 
-            foreach (var cur_direction in controlled_thrusters)
+            float setting;
+            bool  pre_condition;
+
+            for (int dir_index = 0; dir_index < 6; ++dir_index)
             {
-                foreach (var cur_thruster in cur_direction)
+                pre_condition = thrust_control.DampenersEnabled && control_vector[dir_index] > 0.01f && speed > 0.1f;
+                foreach (var cur_thruster in controlled_thrusters[dir_index])
                 {
                     if (!cur_thruster.Key.IsWorking)
                         continue;
                     setting = cur_thruster.Value.current_setting * 100.0f;
-                    if (setting < MIN_OVERRIDE && speed > 1.0f)
+                    if (pre_condition && setting < MIN_OVERRIDE)
                         setting = MIN_OVERRIDE;
                     if ((int) setting != cur_thruster.Value.prev_setting)
                     {
