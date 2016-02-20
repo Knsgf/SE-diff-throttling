@@ -7,7 +7,9 @@ and automatic differential throttling to Space Engineers.
 * Unlike in earlier source modification, gyroscopes do not really stabilise the ship. Instead the plugin simply compares thruster torque with gyroscopes' 
   and reduces or discards the former accordingly,
 * Because this plugin uses thrust override, it is not recommended to enable differential throttling on the side of a ship that has 
-hover engines, i. e. those meant to counteract gravity.
+  hover engines, i. e. those meant to counteract gravity,
+* Torque doesn't apply correctly on ships locked via landing gear. Unfortunately, adding support for this requires linking against HavokWrapper,
+  and I'm not sure on whether it's legal to do so.
   
 ## Installation
 1. Download and install Visual Studio 2015,
