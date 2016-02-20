@@ -215,14 +215,14 @@ namespace thruster_torque_and_differential_throttling
             }
         }
 
-        private void initialise_linear_controls(Vector3 local_linear_velocity)
+        private void initialise_linear_controls(Vector3 local_linear_velocity, Vector3 local_gravity)
         {
             const float DAMPING_CONSTANT = -2.0f;
 
             decompose_vector(thrust_control.ControlThrust, control_vector);
             if (thrust_control.DampenersEnabled)
             {
-                decompose_vector(local_linear_velocity * (grid.Physics.Mass * DAMPING_CONSTANT), braking_vector);
+                decompose_vector((local_linear_velocity * DAMPING_CONSTANT - local_gravity) * grid.Physics.Mass, braking_vector);
                 int opposite_dir = 3;
                 for (int dir_index = 0; dir_index < 6; ++dir_index)
                 {
@@ -304,11 +304,12 @@ namespace thruster_torque_and_differential_throttling
             int opposite_dir;
             Matrix  inverse_world_rotation   = inverse_world_transform.GetOrientation();
             Vector3 local_linear_velocity    = Vector3.Transform(grid.Physics.LinearVelocity , inverse_world_rotation);
+            Vector3 local_gravity            = Vector3.Transform(grid.Physics.Gravity        , inverse_world_rotation);
             local_angular_velocity           = Vector3.Transform(grid.Physics.AngularVelocity, inverse_world_rotation);
             Vector3 requested_force_vector   = Vector3.Zero;
             speed = local_linear_velocity.Length();
 
-            initialise_linear_controls(local_linear_velocity);
+            initialise_linear_controls(local_linear_velocity, local_gravity);
 
             if (gyro_control.ControlTorque.LengthSquared() > 0.0001f)
             {
