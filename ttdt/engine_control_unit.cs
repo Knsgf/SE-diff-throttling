@@ -41,10 +41,10 @@ namespace thruster_torque_and_differential_throttling
         private Dictionary<MyThrust, thruster_info>[] _controlled_thrusters =
         {
             new Dictionary<MyThrust, thruster_info>(),   // fore
-            new Dictionary<MyThrust, thruster_info>(),   // aft
             new Dictionary<MyThrust, thruster_info>(),   // starboard
-            new Dictionary<MyThrust, thruster_info>(),   // port
             new Dictionary<MyThrust, thruster_info>(),   // dorsal
+            new Dictionary<MyThrust, thruster_info>(),   // aft
+            new Dictionary<MyThrust, thruster_info>(),   // port
             new Dictionary<MyThrust, thruster_info>()    // ventral
         };
         private Dictionary<MyThrust, thruster_info> _uncontrolled_thrusters = new Dictionary<MyThrust, thruster_info>();
@@ -62,11 +62,15 @@ namespace thruster_torque_and_differential_throttling
         private MatrixD   _inverse_world_transform;
         private FieldInfo _max_gyro_torque_ref;
         private float     _max_gyro_torque = 0.0f, _max_gyro_torque_squared = 0.0f;
-        private Vector3   _local_angular_velocity;
-        private float     _speed;
-        private bool      _current_mode_is_steady_velocity = false, _new_mode_is_steady_velocity = false;
-        private Vector3   _desired_angular_velocity, _captured_angular_velocity;
-        private bool      _enable_integral = false, _reset_integral = false, _are_gyroscopes_saturated = false;
+
+        private Vector3 _local_angular_velocity;
+        private float   _speed;
+        private bool    _current_mode_is_steady_velocity = false, _new_mode_is_steady_velocity = false;
+        private Vector3 _desired_angular_velocity, _captured_angular_velocity;
+        private bool    _enable_integral = false, _reset_integral = false, _are_gyroscopes_saturated = false;
+
+        private Vector3 _linear_integral = Vector3.Zero, _captured_linear_velocity = Vector3.Zero;
+        private bool    _enable_linear_integral = false, _reset_linear_integral = false;
 
         #endregion
 
@@ -209,12 +213,24 @@ namespace thruster_torque_and_differential_throttling
 
         private void initialise_linear_controls(Vector3 local_linear_velocity, Vector3 local_gravity)
         {
-            const float DAMPING_CONSTANT = -2.0f;
+            const float DAMPING_CONSTANT = -2.0f, INTEGRAL_CONSTANT = -0.05f;
 
             decompose_vector(_thrust_control.ControlThrust, _control_vector);
-            if (_thrust_control.DampenersEnabled)
+            if (!_thrust_control.DampenersEnabled)
             {
-                decompose_vector((local_linear_velocity * DAMPING_CONSTANT - local_gravity) * _grid.Physics.Mass, _braking_vector);
+                _enable_linear_integral = _reset_linear_integral = false;
+                _linear_integral        = Vector3.Zero;
+            }
+            else
+            {
+                if (!_enable_linear_integral)
+                {
+                    _reset_linear_integral    = true;
+                    _captured_linear_velocity = local_linear_velocity;
+                }
+                _enable_linear_integral = _thrust_control.ControlThrust.LengthSquared() < 0.0001f;
+
+                decompose_vector((local_linear_velocity * DAMPING_CONSTANT - local_gravity + _linear_integral) * _grid.Physics.Mass, _braking_vector);
                 int opposite_dir = 3;
                 for (int dir_index = 0; dir_index < 6; ++dir_index)
                 {
@@ -222,12 +238,25 @@ namespace thruster_torque_and_differential_throttling
                     {
                         _control_vector[dir_index] += _braking_vector[dir_index] / _max_force[dir_index];
                         if (_control_vector[dir_index] > 1.0f)
+                        {
                             _control_vector[dir_index] = 1.0f;
+                            _enable_linear_integral    = _reset_linear_integral = false;
+                            _linear_integral           = Vector3.Zero;
+                        }
                     }
                     if (++opposite_dir >= 6)
                         opposite_dir = 0;
                 }
+
+                if (_reset_linear_integral && Vector3.Dot(local_linear_velocity, _captured_linear_velocity) <= 0.0f)
+                {
+                    _reset_linear_integral    = false;
+                    _captured_linear_velocity = _linear_integral = Vector3.Zero;
+                }
+                else if (_enable_linear_integral)
+                    _linear_integral += INTEGRAL_CONSTANT * local_linear_velocity;
             }
+            //screen_text("initialise_linear_controls", string.Format("linear integral {0}, correction = {1}", _enable_linear_integral ? "on" : "off", _linear_integral.Length()), 20);
         }
 
         void adjust_thrust_for_rotation(int cur_dir, int opposite_dir, Vector3 desired_angular_velocity)
@@ -394,7 +423,7 @@ namespace thruster_torque_and_differential_throttling
             check_override_on_uncontrolled();
         }
 
-        private thrust_dir get_nozzle_orientation(MyThrust thruster)
+        private static thrust_dir get_nozzle_orientation(MyThrust thruster)
         {
             Vector3I dir_vector = thruster.ThrustForwardVector;
             if (dir_vector == Vector3I.Forward)
@@ -569,10 +598,12 @@ namespace thruster_torque_and_differential_throttling
                 assign_thruster((MyThrust) cur_thruster);
         }
 
+#if DEBUG
         ~engine_control_unit()
         {
             Debug.Assert(_disposed, "ECU for grid \"" + _grid.DisplayName + "\" [" + _grid.EntityId.ToString() + "] hasn't been disposed properly.");
         }
+#endif
 
         public void Dispose()
         {
@@ -581,6 +612,9 @@ namespace thruster_torque_and_differential_throttling
                 _grid.OnBlockAdded   -= on_block_added;
                 _grid.OnBlockRemoved -= on_block_removed;
                 _disposed = true;
+#if DEBUG
+                GC.SuppressFinalize(this);
+#endif
                 log_ECU_action("Dispose", string.Format("ECU for grid {0} [{1}] has been disposed", _grid.DisplayName, _grid.EntityId));
             }
         }
