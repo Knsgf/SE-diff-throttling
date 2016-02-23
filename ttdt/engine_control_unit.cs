@@ -393,7 +393,8 @@ namespace thruster_torque_and_differential_throttling
 
             normalise_thrust(requested_force_vector);
             apply_thrust_settings();
-            _new_mode_is_steady_velocity = _grid.Physics.LinearAcceleration.LengthSquared() < MIN_ACCELERATION_MODE_ACC * MIN_ACCELERATION_MODE_ACC;
+            // Extra checks to ensure that steady-velocity mode won't cause integral to wind up
+            _new_mode_is_steady_velocity = _thrust_control.ControlThrust.LengthSquared() < 0.0001f && _grid.Physics.LinearAcceleration.LengthSquared() < MIN_ACCELERATION_MODE_ACC * MIN_ACCELERATION_MODE_ACC && _rotational_integral.LengthSquared() < 0.01f;
         }
 
         private static void set_thruster_reference_vector(thruster_info thruster, Vector3 reference)
@@ -649,6 +650,8 @@ namespace thruster_torque_and_differential_throttling
             {
                 _grid.OnBlockAdded   -= on_block_added;
                 _grid.OnBlockRemoved -= on_block_removed;
+                foreach (var cur_thruster in _uncontrolled_thrusters.Keys)
+                    cur_thruster.ThrustOverrideChanged -= on_thrust_override_changed;
                 _disposed = true;
 #if DEBUG
                 GC.SuppressFinalize(this);
