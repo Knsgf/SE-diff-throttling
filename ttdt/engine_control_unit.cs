@@ -103,26 +103,23 @@ namespace thruster_torque_and_differential_throttling
 
         #region torque calculation
 
-        private void refresh_thruster_info()
+        private void refresh_thruster_info_for_single_direction(Dictionary<MyThrust, thruster_info> thrusters)
         {
             thruster_info cur_thruster_info;
 
-            foreach (var cur_direction in _controlled_thrusters)
-            {
-                foreach (var cur_thruster in cur_direction)
-                {
-                    cur_thruster_info = cur_thruster.Value;
-                    cur_thruster_info.CoM_offset = cur_thruster_info.grid_centre_pos - _grid_CoM_location;
-                    cur_thruster_info.max_torque = Vector3.Cross(cur_thruster_info.CoM_offset, -cur_thruster.Key.ThrustForwardVector * cur_thruster.Key.BlockDefinition.ForceMagnitude);
-                }
-            }
-
-            foreach (var cur_thruster in _uncontrolled_thrusters)
+            foreach (var cur_thruster in thrusters)
             {
                 cur_thruster_info = cur_thruster.Value;
                 cur_thruster_info.CoM_offset = cur_thruster_info.grid_centre_pos - _grid_CoM_location;
                 cur_thruster_info.max_torque = Vector3.Cross(cur_thruster_info.CoM_offset, -cur_thruster.Key.ThrustForwardVector * cur_thruster.Key.BlockDefinition.ForceMagnitude);
             }
+        }
+
+        private void refresh_thruster_info()
+        {
+            foreach (var cur_direction in _controlled_thrusters)
+                refresh_thruster_info_for_single_direction(cur_direction);
+            refresh_thruster_info_for_single_direction(_uncontrolled_thrusters);
         }
 
         private void check_override_on_uncontrolled()
@@ -165,8 +162,6 @@ namespace thruster_torque_and_differential_throttling
                 else
                     torque -= Vector3.Normalize(torque) * _max_gyro_torque;
             }
-            //if (_grid.Physics.IsWelded)
-            //    screen_text("calculate_and_apply_torque", "is welded", 20);
             torque = Vector3.Transform(torque, _grid.WorldMatrix.GetOrientation());
             _grid.Physics.AddForce(MyPhysicsForceType.APPLY_WORLD_IMPULSE_AND_WORLD_ANGULAR_IMPULSE, Vector3.Zero, null, torque);
         }
@@ -190,11 +185,11 @@ namespace thruster_torque_and_differential_throttling
             const float MIN_OVERRIDE = 2.0f;
 
             float setting;
-            bool  pre_condition;
+            bool  enforce_min_override;
 
             for (int dir_index = 0; dir_index < 6; ++dir_index)
             {
-                pre_condition = _control_vector[dir_index] > 0.01f && _speed > 0.1f;
+                enforce_min_override = _control_vector[dir_index] > 0.01f && _speed > 0.1f;
                 foreach (var cur_thruster in _controlled_thrusters[dir_index])
                 {
                     if (!cur_thruster.Key.IsWorking)
@@ -207,7 +202,7 @@ namespace thruster_torque_and_differential_throttling
                         continue;
                     }
                     setting = cur_thruster.Value.current_setting * 100.0f;
-                    if (pre_condition && setting < MIN_OVERRIDE)
+                    if (enforce_min_override && setting < MIN_OVERRIDE)
                         setting = MIN_OVERRIDE;
                     if ((int) setting != cur_thruster.Value.prev_setting)
                     {
@@ -262,7 +257,6 @@ namespace thruster_torque_and_differential_throttling
                 else if (_enable_linear_integral)
                     _linear_integral += INTEGRAL_CONSTANT * local_linear_velocity;
             }
-            //screen_text("initialise_linear_controls", string.Format("linear integral {0}, correction = {1}", _enable_linear_integral ? "on" : "off", _linear_integral.Length()), 20);
         }
 
         void adjust_thrust_for_rotation(int cur_dir, int opposite_dir, Vector3 desired_angular_velocity)
@@ -285,7 +279,7 @@ namespace thruster_torque_and_differential_throttling
                     cur_thruster.Value.current_setting += desired_setting;
                     if (cur_thruster.Value.current_setting > 1.0f)
                         cur_thruster.Value.current_setting = 1.0f;
-                    if (_control_vector[opposite_dir] > 0.01f)      // Limit thrusters opposing player/ID input
+                    if (_control_vector[opposite_dir] > 0.01f)      // Limit thrusters opposing player/ID linear input
                         cur_thruster.Value.current_setting /= (_control_vector[opposite_dir] * (1.0f / MAX_LINEAR_OPPOSITION - 1.0f) + 1.0f);
                 }
                 else if (_desired_force[opposite_dir] > 0.0f)
@@ -300,7 +294,7 @@ namespace thruster_torque_and_differential_throttling
             }
         }
 
-        // Ensure that resulting linear force doesn't exceed player/ID input
+        // Ensures that resulting linear force doesn't exceed player/ID input (to prevent undesired drift when turning)
         void normalise_thrust(Vector3 requested_force_vector)
         {
             int   opposite_dir = 3;
@@ -327,7 +321,7 @@ namespace thruster_torque_and_differential_throttling
 
         private void handle_thrust_control()
         {
-            const float MIN_ACCELERATION_MODE_ACC = 0.2f, ANGULAR_INTEGRAL_COEFF = -0.05f, ANGULAR_DERIVATIVE_COEFF = -0.05f;
+            const float MIN_ACCELERATION_MODE_ACC = 0.2f, ANGULAR_INTEGRAL_COEFF = -0.05f, ANGULAR_DERIVATIVE_COEFF = -0.01f;
 
             int opposite_dir;
             Matrix  inverse_world_rotation     = _inverse_world_transform.GetOrientation();
@@ -393,8 +387,10 @@ namespace thruster_torque_and_differential_throttling
 
             normalise_thrust(requested_force_vector);
             apply_thrust_settings();
-            // Extra checks to ensure that steady-velocity mode won't cause integral to wind up
-            _new_mode_is_steady_velocity = _thrust_control.ControlThrust.LengthSquared() < 0.0001f && _grid.Physics.LinearAcceleration.LengthSquared() < MIN_ACCELERATION_MODE_ACC * MIN_ACCELERATION_MODE_ACC && _rotational_integral.LengthSquared() < 0.01f;
+            // Extra checks to ensure that steady-velocity mode won't cause integral to wind up out of control
+            _new_mode_is_steady_velocity = _thrust_control.ControlThrust.LengthSquared() < 0.0001f 
+                && _grid.Physics.LinearAcceleration.LengthSquared() < MIN_ACCELERATION_MODE_ACC * MIN_ACCELERATION_MODE_ACC 
+                && _rotational_integral.LengthSquared() < 0.01f;
         }
 
         private static void set_thruster_reference_vector(thruster_info thruster, Vector3 reference)
@@ -614,22 +610,22 @@ namespace thruster_torque_and_differential_throttling
         public engine_control_unit(MyCubeGrid grid)
         {
             Debug.Assert(grid != null, "TT&DT engine_control_unit ERROR: grid == null");
-            this._grid = grid;
-            grid.OnBlockAdded   += on_block_added;
-            grid.OnBlockRemoved += on_block_removed;
-            _inverse_world_transform = grid.PositionComp.WorldMatrixNormalizedInv;
-            _grid_CoM_location       = Vector3D.Transform(grid.Physics.CenterOfMassWorld, _inverse_world_transform);
+            _grid = grid;
+            _grid.OnBlockAdded   += on_block_added;
+            _grid.OnBlockRemoved += on_block_removed;
+            _inverse_world_transform = _grid.PositionComp.WorldMatrixNormalizedInv;
+            _grid_CoM_location       = Vector3D.Transform(_grid.Physics.CenterOfMassWorld, _inverse_world_transform);
             calc_spherical_moment_of_inertia();
 
-            Type grid_systems_type = grid.GridSystems.GetType();
+            Type grid_systems_type = _grid.GridSystems.GetType();
             PropertyInfo gyro_system_ref = grid_systems_type.GetProperty("GyroSystem", BindingFlags.Instance | BindingFlags.NonPublic);
-            _gyro_control = (MyGridGyroSystem) gyro_system_ref.GetValue(grid.GridSystems);
+            _gyro_control = (MyGridGyroSystem) gyro_system_ref.GetValue(_grid.GridSystems);
             Debug.Assert(_gyro_control != null, "TT&DT engine_control_unit ERROR: gyro_control == null");
             Type gyro_system_type = _gyro_control.GetType();
             _max_gyro_torque_ref  = gyro_system_type.GetField("m_maxGyroForce", BindingFlags.Instance | BindingFlags.NonPublic);
 
             PropertyInfo terminal_system_ref = grid_systems_type.GetProperty("TerminalSystem", BindingFlags.Instance | BindingFlags.NonPublic);
-            var grid_control = (IMyGridTerminalSystem)terminal_system_ref.GetValue(grid.GridSystems);
+            var grid_control = (IMyGridTerminalSystem)terminal_system_ref.GetValue(_grid.GridSystems);
             Debug.Assert(grid_control != null, "TT&DT engine_control_unit ERROR: grid_control == null");
             var thruster_list  = new List<IMyTerminalBlock>();
             grid_control.GetBlocksOfType<IMyThrust>(thruster_list);
