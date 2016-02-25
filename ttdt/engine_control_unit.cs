@@ -50,7 +50,7 @@ namespace thruster_torque_and_differential_throttling
         private float[] _max_force        = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
         private float[] _control_vector   = new float[6];
         private float[] _braking_vector   = new float[6];
-        private float[] _desired_torque   = new float[6];
+        private float[] _linear_component = new float[6];
         private float[] _requested_force  = new float[6];
         private float[] _actual_force     = new float[6];
         private  bool[] _dampers_disabled = { false, false, false, false, false, false };
@@ -269,8 +269,8 @@ namespace thruster_torque_and_differential_throttling
 
         void adjust_thrust_for_steering(int cur_dir, int opposite_dir, Vector3 desired_angular_velocity)
         {
-            const float DAMPING_CONSTANT = 0.5f;
-            //const float DAMPING_CONSTANT = 2.0f;
+            //const float DAMPING_CONSTANT = 10.0f;
+            const float THRUST_INCREASE_SENSITIVITY = 1.0f, THRUST_REDUCTION_SENSITIVITY = 0.5f;
             const float MIN_LINEAR_OPPOSITION = 0.1f, MAX_LINEAR_OPPOSITION = 0.5f;
 
             Vector3       angular_velocity_diff = desired_angular_velocity - _local_angular_velocity;
@@ -292,12 +292,12 @@ namespace thruster_torque_and_differential_throttling
                 cur_thruster_info = cur_thruster.Value;
                 if (cur_thruster_info.actual_max_force < 1.0f)
                     continue;
-                //decompose_vector(Vector3.Cross(angular_velocity_diff, thrust_info.reference_normalised), _desired_force);
-                decompose_vector(Vector3.Cross(angular_velocity_diff, cur_thruster_info.reference_vector), _desired_torque);
-                if (_desired_torque[cur_dir] > 0.0f)
+                //decompose_vector(Vector3.Cross(angular_velocity_diff, cur_thruster_info.reference_normalised), _linear_component);
+                decompose_vector(Vector3.Cross(angular_velocity_diff, cur_thruster_info.reference_vector), _linear_component);
+                if (_linear_component[cur_dir] > 0.0f)
                 {
-                    //desired_setting = DAMPING_CONSTANT * _desired_torque[cur_dir] * _max_force[cur_dir] / _specific_moment_of_inertia;
-                    desired_setting = DAMPING_CONSTANT * _desired_torque[cur_dir] * _max_force[cur_dir] / _grid.Physics.Mass;
+                    desired_setting = THRUST_INCREASE_SENSITIVITY * _linear_component[cur_dir] * _specific_moment_of_inertia / _max_force[cur_dir];
+                    //desired_setting = (THRUST_INCREASE_SENSITIVITY * _linear_component[cur_dir] * _grid.Physics.Mass / _max_force[cur_dir]);
                     cur_thruster_info.current_setting += desired_setting;
                     if (_control_vector[opposite_dir] > 0.01f)
                     {
@@ -308,10 +308,10 @@ namespace thruster_torque_and_differential_throttling
                     else if (cur_thruster_info.current_setting > 1.0f)
                         cur_thruster_info.current_setting = 1.0f;
                 }
-                else if (_desired_torque[opposite_dir] > 0.0f)
+                else if (_linear_component[opposite_dir] > 0.0f)
                 {
-                    //desired_setting = DAMPING_CONSTANT * _desired_torque[opposite_dir] * _max_force[cur_dir] / _specific_moment_of_inertia;
-                    desired_setting = DAMPING_CONSTANT * _desired_torque[opposite_dir] * _max_force[cur_dir] / _grid.Physics.Mass;
+                    desired_setting = THRUST_REDUCTION_SENSITIVITY * _linear_component[opposite_dir] * _max_force[cur_dir] / _specific_moment_of_inertia;
+                    //desired_setting = THRUST_REDUCTION_SENSITIVITY * _linear_component[opposite_dir] * _max_force[cur_dir] / _grid.Physics.Mass;
                     cur_thruster_info.current_setting -= desired_setting;
                     if (cur_thruster_info.current_setting < 0.0f)
                         cur_thruster_info.current_setting = 0.0f;
@@ -412,7 +412,7 @@ namespace thruster_torque_and_differential_throttling
                     else
                     {
                         cur_thruster_info.current_setting = _control_vector[dir_index];
-                        _requested_force[dir_index]       += _control_vector[dir_index] * cur_thruster_info.actual_max_force;
+                        _requested_force[dir_index]      += cur_thruster_info.current_setting * cur_thruster_info.actual_max_force;
                     }
                 }
                 if (_gyro_override_active || _dampers_disabled[dir_index])
