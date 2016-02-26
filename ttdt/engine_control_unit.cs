@@ -58,6 +58,7 @@ namespace thruster_torque_and_differential_throttling
         private bool      _disposed = false, _gyro_override_active = false;
         private Vector3D  _grid_CoM_location;
         private MatrixD   _inverse_world_transform;
+        private Matrix    _inverse_world_rotation_fixed;
         private FieldInfo _max_gyro_torque_ref, _gyro_override_ref;
         private float     _max_gyro_torque = 0.0f, _max_gyro_torque_squared = 0.0f;
         private float     _specific_moment_of_inertia;  // Grid's approximate spherical moment of inertia divided by mean radius
@@ -66,10 +67,10 @@ namespace thruster_torque_and_differential_throttling
         private float   _speed;
         private bool    _current_mode_is_steady_velocity = false, _new_mode_is_steady_velocity = false;
         private Vector3 _desired_angular_velocity, _captured_angular_velocity, _rotational_integral = Vector3.Zero;
-        private bool    _enable_integral = false, _reset_integral = false, _are_gyroscopes_saturated = false;
+        private bool    _enable_integral = true, _reset_integral = false, _are_gyroscopes_saturated = false;
 
         private Vector3 _linear_integral = Vector3.Zero, _captured_linear_velocity = Vector3.Zero;
-        private bool    _enable_linear_integral = false, _reset_linear_integral = false, _allow_extra_linear_opposition = false;
+        private bool    _enable_linear_integral = true, _reset_linear_integral = false, _allow_extra_linear_opposition = false;
 
 
         #endregion
@@ -234,9 +235,11 @@ namespace thruster_torque_and_differential_throttling
                     _captured_linear_velocity = local_linear_velocity;
                     _linear_integral          = Vector3.Zero;
                 }
-                _enable_linear_integral = local_gravity.LengthSquared() > 0.0001f && _thrust_control.ControlThrust.LengthSquared() < 0.0001f;
+                _enable_linear_integral = local_gravity.LengthSquared() > 0.0001f 
+                    && _thrust_control.ControlThrust.LengthSquared() < 0.0001f;
 
-                decompose_vector((local_linear_velocity * DAMPING_CONSTANT - local_gravity + _linear_integral) * _grid.Physics.Mass, _braking_vector);
+                decompose_vector((local_linear_velocity * DAMPING_CONSTANT - local_gravity + _linear_integral) * _grid.Physics.Mass, 
+                    _braking_vector);
                 int opposite_dir = 3;
                 for (int dir_index = 0; dir_index < 6; ++dir_index)
                 {
@@ -270,7 +273,7 @@ namespace thruster_torque_and_differential_throttling
         void adjust_thrust_for_steering(int cur_dir, int opposite_dir, Vector3 desired_angular_velocity)
         {
             //const float DAMPING_CONSTANT = 10.0f;
-            const float THRUST_INCREASE_SENSITIVITY = 1.0f, THRUST_REDUCTION_SENSITIVITY = 0.5f;
+            const float THRUST_INCREASE_SENSITIVITY = 1.0f, THRUST_REDUCTION_SENSITIVITY = 1.0f;
             const float MIN_LINEAR_OPPOSITION = 0.1f, MAX_LINEAR_OPPOSITION = 0.5f;
 
             Vector3       angular_velocity_diff = desired_angular_velocity - _local_angular_velocity;
@@ -310,7 +313,8 @@ namespace thruster_torque_and_differential_throttling
                 }
                 else if (_linear_component[opposite_dir] > 0.0f)
                 {
-                    desired_setting = THRUST_REDUCTION_SENSITIVITY * _linear_component[opposite_dir] * _max_force[cur_dir] / _specific_moment_of_inertia;
+                    desired_setting = THRUST_REDUCTION_SENSITIVITY * _linear_component[opposite_dir] * _specific_moment_of_inertia / _max_force[cur_dir];
+                    //desired_setting = THRUST_REDUCTION_SENSITIVITY * _linear_component[opposite_dir] * _max_force[cur_dir] / _specific_moment_of_inertia;
                     //desired_setting = THRUST_REDUCTION_SENSITIVITY * _linear_component[opposite_dir] * _max_force[cur_dir] / _grid.Physics.Mass;
                     cur_thruster_info.current_setting -= desired_setting;
                     if (cur_thruster_info.current_setting < 0.0f)
@@ -352,11 +356,15 @@ namespace thruster_torque_and_differential_throttling
 
         private void handle_thrust_control()
         {
-            const float ANGULAR_INTEGRAL_COEFF = -0.05f, ANGULAR_DERIVATIVE_COEFF = -0.01f;
+            const float ANGULAR_INTEGRAL_COEFF = -0.1f, ANGULAR_DERIVATIVE_COEFF = -0.01f;
 
             int opposite_dir;
-            Matrix  inverse_world_rotation     = _inverse_world_transform.GetOrientation();
-            Vector3 local_linear_velocity      = Vector3.Transform(_grid.Physics.LinearVelocity     , inverse_world_rotation);
+
+            // Using a "fixed" (it changes orientation only when the player steers a ship) inverse rotation matrix here to 
+            // prevent Dutch Roll-like tendencies at high speeds
+            Vector3 local_linear_velocity = Vector3.Transform(_grid.Physics.LinearVelocity, _inverse_world_rotation_fixed);
+
+            Matrix inverse_world_rotation      = _inverse_world_transform.GetOrientation();
             Vector3 local_gravity              = Vector3.Transform(_grid.Physics.Gravity            , inverse_world_rotation);
             _local_angular_velocity            = Vector3.Transform(_grid.Physics.AngularVelocity    , inverse_world_rotation);
             Vector3 local_angular_acceleration = Vector3.Transform(_grid.Physics.AngularAcceleration, inverse_world_rotation);
@@ -370,13 +378,15 @@ namespace thruster_torque_and_differential_throttling
                 Vector3 angular_velocity_to_cancel = _local_angular_velocity - _local_angular_velocity * Vector3.Dot(_local_angular_velocity, control_torque_norm);
                 _desired_angular_velocity          = _gyro_control.ControlTorque * 15.0f - angular_velocity_to_cancel;
                 _enable_integral                   = _reset_integral = false;
+                _inverse_world_rotation_fixed      = inverse_world_rotation;
             }
             else
             {
                 if (_reset_integral && Vector3.Dot(_captured_angular_velocity, _local_angular_velocity) <= 0.0f)
                 {
-                    _rotational_integral = _captured_angular_velocity = Vector3.Zero;
-                    _reset_integral      = false;
+                    _rotational_integral          = _captured_angular_velocity = Vector3.Zero;
+                    _reset_integral               = false;
+                    _inverse_world_rotation_fixed = inverse_world_rotation;
                 }
                 else if (_enable_integral)
                 {
@@ -387,9 +397,10 @@ namespace thruster_torque_and_differential_throttling
                 }
                 else
                 {
-                    _rotational_integral       = Vector3.Zero;
-                    _captured_angular_velocity = _local_angular_velocity;
-                    _reset_integral            = _enable_integral = true;
+                    _rotational_integral          = Vector3.Zero;
+                    _captured_angular_velocity    = _local_angular_velocity;
+                    _reset_integral               = _enable_integral = true;
+                    _inverse_world_rotation_fixed = inverse_world_rotation;
                 }
                 _desired_angular_velocity = -_local_angular_velocity + _rotational_integral + ANGULAR_DERIVATIVE_COEFF * local_angular_acceleration;
             }
@@ -664,8 +675,9 @@ namespace thruster_torque_and_differential_throttling
             _grid = grid;
             _grid.OnBlockAdded   += on_block_added;
             _grid.OnBlockRemoved += on_block_removed;
-            _inverse_world_transform = _grid.PositionComp.WorldMatrixNormalizedInv;
-            _grid_CoM_location       = Vector3D.Transform(_grid.Physics.CenterOfMassWorld, _inverse_world_transform);
+            _inverse_world_transform      = _grid.PositionComp.WorldMatrixNormalizedInv;
+            _grid_CoM_location            = Vector3D.Transform(_grid.Physics.CenterOfMassWorld, _inverse_world_transform);
+            _inverse_world_rotation_fixed = _inverse_world_transform.GetOrientation();
             calc_spherical_moment_of_inertia();
 
             Type grid_systems_type = _grid.GridSystems.GetType();
