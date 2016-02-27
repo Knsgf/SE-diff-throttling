@@ -48,7 +48,7 @@ namespace thruster_torque_and_differential_throttling
         private Dictionary<MyThrust, thruster_info> _uncontrolled_thrusters = new Dictionary<MyThrust, thruster_info>();
         private List<MyThrust> _shallow_copy = new List<MyThrust>();
         private float[] _max_force        = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
-        private float[] _control_vector   = new float[6];
+        private float[] _control_vector   = new float[6], _control_vector_copy = new float[6];
         private float[] _braking_vector   = new float[6];
         private float[] _linear_component = new float[6];
         private float[] _requested_force  = new float[6];
@@ -69,9 +69,12 @@ namespace thruster_torque_and_differential_throttling
         private Vector3 _desired_angular_velocity, _captured_angular_velocity, _rotational_integral = Vector3.Zero;
         private bool    _enable_integral = true, _reset_integral = false, _are_gyroscopes_saturated = false;
 
-        private Vector3 _linear_integral = Vector3.Zero, _captured_linear_velocity = Vector3.Zero;
-        private bool    _enable_linear_integral = true, _reset_linear_integral = false, _allow_extra_linear_opposition = false;
-
+        private  bool   _allow_extra_linear_opposition = false, _integral_cleared = false;
+        private  bool[] _enable_linear_integral    = {  true,  true,  true,  true,  true,  true };
+        private  bool[] _reset_linear_integral     = { false, false, false, false, false, false };
+        private float[] _linear_integral           = {  0.0f,  0.0f,  0.0f,  0.0f,  0.0f,  0.0f };
+        private float[] _local_gravity_inv         = new float[6];
+        private float[] _local_linear_velocity_inv = new float[6];
 
         #endregion
 
@@ -101,6 +104,19 @@ namespace thruster_torque_and_differential_throttling
                 Sandbox.ModAPI.MyAPIGateway.Utilities.ShowNotification(string.Format("\"{0}\" {1}", _grid.DisplayName, message), display_time_ms);
             else
                 Sandbox.ModAPI.MyAPIGateway.Utilities.ShowNotification(string.Format("engine_control_unit.{0}(): \"{1}\" {2}", method_name, _grid.DisplayName, message), display_time_ms);
+        }
+
+        [Conditional("DEBUG")]
+        private void screen_vector<type>(string method_name, string vector_name, type[] vector, int display_time_ms)
+        {
+            screen_text(method_name, string.Format("{0} = {1:F3}/{2:F3}/{3:F3}/{4:F3}/{5:F3}/{6:F3}", 
+                vector_name,
+                vector[(int) thrust_dir.fore     ],
+                vector[(int) thrust_dir.aft      ],
+                vector[(int) thrust_dir.starboard],
+                vector[(int) thrust_dir.port     ],
+                vector[(int) thrust_dir.dorsal   ],
+                vector[(int) thrust_dir.ventral  ]), display_time_ms);
         }
 
         #endregion
@@ -219,54 +235,75 @@ namespace thruster_torque_and_differential_throttling
             }
         }
 
-        private void initialise_linear_controls(Vector3 local_linear_velocity, Vector3 local_gravity)
+        private void initialise_linear_controls(Vector3 local_linear_velocity_vector, Vector3 local_gravity_vector)
         {
-            const float DAMPING_CONSTANT = -2.0f, INTEGRAL_CONSTANT = -0.05f;
+            const float DAMPING_CONSTANT = -2.0f, INTEGRAL_CONSTANT = 0.05f;
 
             _allow_extra_linear_opposition = _thrust_control.ControlThrust.LengthSquared() > 0.75f * 0.75f;
             decompose_vector(_thrust_control.ControlThrust, _control_vector);
             if (!_thrust_control.DampenersEnabled)
-                _enable_linear_integral = _reset_linear_integral = false;
+            {
+                if (!_integral_cleared)
+                {
+                    for (int dir_index = 0; dir_index < 6; ++dir_index)
+                    {
+                        _enable_linear_integral[dir_index] = _reset_linear_integral[dir_index] = false;
+                        _linear_integral[dir_index]        = 0.0f;
+                    }
+                    _integral_cleared = true;
+                }
+            }
             else
             {
-                if (!_enable_linear_integral)
-                {
-                    _reset_linear_integral    = true;
-                    _captured_linear_velocity = local_linear_velocity;
-                    _linear_integral          = Vector3.Zero;
-                }
-                _enable_linear_integral = local_gravity.LengthSquared() > 0.0001f 
-                    && _thrust_control.ControlThrust.LengthSquared() < 0.0001f;
-
-                decompose_vector((local_linear_velocity * DAMPING_CONSTANT - local_gravity + _linear_integral) * _grid.Physics.Mass, 
+                _integral_cleared = false;
+                decompose_vector((local_linear_velocity_vector * DAMPING_CONSTANT - local_gravity_vector) * _grid.Physics.Mass,
                     _braking_vector);
+                decompose_vector(-local_gravity_vector        , _local_gravity_inv        );
+                decompose_vector(-local_linear_velocity_vector, _local_linear_velocity_inv);
+                for (int dir_index = 0; dir_index < 6; ++dir_index)
+                    _control_vector_copy[dir_index] = _control_vector[dir_index];
+
                 int opposite_dir = 3;
                 for (int dir_index = 0; dir_index < 6; ++dir_index)
                 {
+                    _enable_linear_integral[dir_index] = _local_gravity_inv[dir_index] > 0.0f
+                        && _control_vector_copy[dir_index] < 0.01f && _control_vector_copy[opposite_dir] < 0.01f;
+
                     if (_dampers_disabled[dir_index] || _controlled_thrusters[dir_index].Count == 0 || _max_force[dir_index] <= 0.0f)
-                        _enable_linear_integral = _reset_linear_integral = false;
-                    else if (_control_vector[opposite_dir] < 0.01f)
+                        _enable_linear_integral[dir_index] = _reset_linear_integral[dir_index] = false;
+                    else if (_control_vector_copy[opposite_dir] < 0.01f)
                     {
-                        _control_vector[dir_index] += _braking_vector[dir_index] / _max_force[dir_index];
-                        if (_control_vector[dir_index] > 1.0f)
+                        _control_vector[dir_index] += (_braking_vector[dir_index] + _grid.Physics.Mass * _linear_integral[dir_index]) 
+                            / _max_force[dir_index];
+                        if (_control_vector[dir_index] >= 1.0f)
                         {
-                            _control_vector[dir_index] = 1.0f;
-                            _enable_linear_integral    = _reset_linear_integral = false;
+                            _control_vector[dir_index]         = 1.0f;
+                            _enable_linear_integral[dir_index] = _reset_linear_integral[dir_index] = false;
                         }
                         if (_control_vector[dir_index] > 0.75f)
                             _allow_extra_linear_opposition = true;
                     }
+
+                    if (_reset_linear_integral[dir_index] && _local_linear_velocity_inv[dir_index] <= 0.0f)
+                    {
+                        _reset_linear_integral[dir_index] = false;
+                        _linear_integral[dir_index]       = 0.0f;
+                    }
+                    else if (_enable_linear_integral[dir_index])
+                    {
+                        _linear_integral[dir_index] += INTEGRAL_CONSTANT * (_local_linear_velocity_inv[dir_index] - _local_linear_velocity_inv[opposite_dir]);
+                        if (_linear_integral[dir_index] < 0.0f)
+                            _linear_integral[dir_index] = 0.0f;
+                    }
+                    else
+                    {
+                        _reset_linear_integral[dir_index] = true;
+                        _linear_integral[dir_index]       = 0.0f;
+                    }
+
                     if (++opposite_dir >= 6)
                         opposite_dir = 0;
                 }
-
-                if (_reset_linear_integral && Vector3.Dot(local_linear_velocity, _captured_linear_velocity) <= 0.0f)
-                {
-                    _reset_linear_integral    = false;
-                    _captured_linear_velocity = _linear_integral = Vector3.Zero;
-                }
-                else if (_enable_linear_integral)
-                    _linear_integral += INTEGRAL_CONSTANT * local_linear_velocity;
             }
         }
 
