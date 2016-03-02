@@ -72,7 +72,7 @@ namespace thruster_torque_and_differential_throttling
 
         private  bool   _allow_extra_linear_opposition = false, _integral_cleared = false;
         private  bool[] _enable_linear_integral    = {  true,  true,  true,  true,  true,  true };
-        private  bool[] _reset_linear_integral     = { false, false, false, false, false, false };
+        //private  bool[] _reset_linear_integral     = { false, false, false, false, false, false };
         private float[] _linear_integral           = {  0.0f,  0.0f,  0.0f,  0.0f,  0.0f,  0.0f };
         private float[] _local_gravity_inv         = new float[6];
         private float[] _local_linear_velocity_inv = new float[6];
@@ -260,7 +260,7 @@ namespace thruster_torque_and_differential_throttling
                 {
                     for (int dir_index = 0; dir_index < 6; ++dir_index)
                     {
-                        _enable_linear_integral[dir_index] = _reset_linear_integral[dir_index] = false;
+                        _enable_linear_integral[dir_index] = /*_reset_linear_integral[dir_index] =*/ false;
                         _linear_integral[dir_index]        = 0.0f;
                     }
                     _integral_cleared = true;
@@ -283,7 +283,7 @@ namespace thruster_torque_and_differential_throttling
                         && _control_vector_copy[dir_index] < 0.01f && _control_vector_copy[opposite_dir] < 0.01f;
 
                     if (_dampers_disabled[dir_index] || _controlled_thrusters[dir_index].Count == 0 || _max_force[dir_index] <= 0.0f)
-                        _enable_linear_integral[dir_index] = _reset_linear_integral[dir_index] = false;
+                        _enable_linear_integral[dir_index] = /*_reset_linear_integral[dir_index] =*/ false;
                     else if (_control_vector_copy[opposite_dir] < 0.01f)
                     {
                         _control_vector[dir_index] += (_braking_vector[dir_index] + _grid.Physics.Mass * _linear_integral[dir_index]) 
@@ -291,18 +291,18 @@ namespace thruster_torque_and_differential_throttling
                         if (_control_vector[dir_index] >= 1.0f)
                         {
                             _control_vector[dir_index]         = 1.0f;
-                            _enable_linear_integral[dir_index] = _reset_linear_integral[dir_index] = false;
+                            _enable_linear_integral[dir_index] = /*_reset_linear_integral[dir_index] =*/ false;
                         }
                         if (_control_vector[dir_index] > 0.75f)
                             _allow_extra_linear_opposition = true;
                     }
 
-                    if (_reset_linear_integral[dir_index] && _local_linear_velocity_inv[dir_index] <= 0.0f)
+                    /*if (_reset_linear_integral[dir_index] && _local_linear_velocity_inv[dir_index] <= 0.0f)
                     {
                         _reset_linear_integral[dir_index] = false;
-                        _linear_integral[dir_index]       = 0.0f;
+                        //_linear_integral[dir_index]       = 0.0f;
                     }
-                    else if (_enable_linear_integral[dir_index])
+                    else*/ if (_enable_linear_integral[dir_index])
                     {
                         _linear_integral[dir_index] += INTEGRAL_CONSTANT * (_local_linear_velocity_inv[dir_index] - _local_linear_velocity_inv[opposite_dir]);
                         if (_linear_integral[dir_index] < 0.0f)
@@ -310,7 +310,7 @@ namespace thruster_torque_and_differential_throttling
                     }
                     else
                     {
-                        _reset_linear_integral[dir_index] = true;
+                        //_reset_linear_integral[dir_index] = true;
                         _linear_integral[dir_index]       = 0.0f;
                     }
 
@@ -449,6 +449,10 @@ namespace thruster_torque_and_differential_throttling
                         if (_rotational_integral.LengthSquared() < 10.0f || Vector3.Dot(_rotational_integral, rotational_integral_change) < 0.0f)
                             _rotational_integral += rotational_integral_change;
                     }
+
+                    // Force update of "fixed" inverse rotation matrix when angle exceeds 11 degrees
+                    if (Vector3.Dot(_inverse_world_rotation_fixed.Forward, inverse_world_rotation.Forward) < 0.98f)
+                        _inverse_world_rotation_fixed = inverse_world_rotation;
                 }
                 else
                 {
