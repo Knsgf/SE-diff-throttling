@@ -64,11 +64,13 @@ namespace thruster_torque_and_differential_throttling
         private float     _max_gyro_torque = 0.0f, _max_gyro_torque_squared = 0.0f;
         private float     _specific_moment_of_inertia;  // Grid's approximate spherical moment of inertia divided by mean radius
 
-        private Vector3 _local_angular_velocity, _prev_angular_velocity = Vector3.Zero;
-        private float   _speed;
-        private bool    _current_mode_is_steady_velocity = false, _new_mode_is_steady_velocity = false;
-        private Vector3 _desired_angular_velocity, _captured_angular_velocity, _rotational_integral = Vector3.Zero, _last_control_dir = Vector3.Zero;
-        private bool    _enable_integral = true, _restrict_integral = false, _all_engines_off;
+        private Vector3   _local_angular_velocity, _prev_angular_velocity = Vector3.Zero;
+        private float     _speed;
+        private bool      _current_mode_is_steady_velocity = false, _new_mode_is_steady_velocity = false;
+        private Vector3   _desired_angular_velocity, _captured_angular_velocity, _current_trim = Vector3.Zero, _last_control_dir = Vector3.Zero;
+        private bool      _enable_integral = true, _restrict_integral = false, _all_engines_off;
+        private Vector3[] _trim_settings = new Vector3[27];
+        private sbyte     _last_control_scheme = -1;
 
         private  bool   _allow_extra_linear_opposition = false, _integral_cleared = false;
         private  bool[] _enable_linear_integral    = {  true,  true,  true,  true,  true,  true };
@@ -320,7 +322,33 @@ namespace thruster_torque_and_differential_throttling
             }
         }
 
-        void adjust_thrust_for_steering(int cur_dir, int opposite_dir, Vector3 desired_angular_velocity)
+        private sbyte get_current_control_scheme()
+        {
+            const float MIN_CONTROL = 0.3f;
+
+            sbyte result;
+
+            if (_control_vector[(int) thrust_dir.fore] > MIN_CONTROL)
+                result = 1;
+            else if (_control_vector[(int) thrust_dir.aft] > MIN_CONTROL)
+                result = 2;
+            else
+                result = 0;
+
+            if (_control_vector[(int) thrust_dir.starboard] > MIN_CONTROL)
+                result += 3;
+            else if (_control_vector[(int) thrust_dir.port] > MIN_CONTROL)
+                result += 6;
+
+            if (_control_vector[(int) thrust_dir.dorsal] > MIN_CONTROL)
+                result += 9;
+            else if (_control_vector[(int) thrust_dir.ventral] > MIN_CONTROL)
+                result += 18;
+
+            return result;
+        }
+
+        private void adjust_thrust_for_steering(int cur_dir, int opposite_dir, Vector3 desired_angular_velocity)
         {
             const float THRUST_INCREASE_SENSITIVITY = 0.5f, THRUST_REDUCTION_SENSITIVITY = 0.5f;
             const float MIN_LINEAR_OPPOSITION = 0.1f, MAX_LINEAR_OPPOSITION = 0.5f;
@@ -405,8 +433,6 @@ namespace thruster_torque_and_differential_throttling
         {
             const float ANGULAR_INTEGRAL_COEFF = -0.1f, ANGULAR_DERIVATIVE_COEFF = -0.01f;
 
-            int opposite_dir;
-
             // Using a "fixed" (it changes orientation only when the player steers a ship) inverse rotation matrix here to 
             // prevent Dutch Roll-like tendencies at high speeds
             Vector3 local_linear_velocity = Vector3.Transform(_grid.Physics.LinearVelocity, _inverse_world_rotation_fixed);
@@ -422,15 +448,25 @@ namespace thruster_torque_and_differential_throttling
 
             if (_gyro_control.ControlTorque.LengthSquared() > 0.0001f)
             {
-                _last_control_dir    = _gyro_control.ControlTorque;
-                _rotational_integral = (_rotational_integral + ANGULAR_INTEGRAL_COEFF * _local_angular_velocity) 
-                    * Vector3.IsZeroVector(_last_control_dir, 0.01f);
-                _desired_angular_velocity     = _gyro_control.ControlTorque * 15.0f + _rotational_integral + ANGULAR_DERIVATIVE_COEFF * local_angular_acceleration;
+                _last_control_dir = _gyro_control.ControlTorque;
+                _current_trim     = (_current_trim + ANGULAR_INTEGRAL_COEFF * _local_angular_velocity) * Vector3.IsZeroVector(_last_control_dir, 0.01f);
+                _desired_angular_velocity     = _gyro_control.ControlTorque * 15.0f + _current_trim + ANGULAR_DERIVATIVE_COEFF * local_angular_acceleration;
                 _enable_integral              = _restrict_integral = false;
                 _inverse_world_rotation_fixed = inverse_world_rotation;
+                _last_control_scheme          = -1;
             }
             else
             {
+                sbyte control_scheme = get_current_control_scheme();
+                if (control_scheme != _last_control_scheme)
+                {
+                    if (_last_control_scheme < 0)
+                        _current_trim += (Vector3.One - Vector3.IsZeroVector(_last_control_dir, 0.01f)) * _trim_settings[control_scheme];
+                    else
+                        _current_trim  = (_current_trim + _trim_settings[control_scheme]) * 0.5f;
+                    _last_control_scheme = control_scheme;
+                }
+
                 if (_restrict_integral && Vector3.Dot(_captured_angular_velocity, _local_angular_velocity) <= 0.0f)
                 {
                     _captured_angular_velocity    = Vector3.Zero;
@@ -440,18 +476,19 @@ namespace thruster_torque_and_differential_throttling
                 else if (_enable_integral)
                 {
                     if (_all_engines_off)
-                        _rotational_integral = Vector3.Zero;
+                        _current_trim = Vector3.Zero;
                     else
                     {
-                        Vector3 rotational_integral_change = _local_angular_velocity * ANGULAR_INTEGRAL_COEFF;
+                        Vector3 trim_change = _local_angular_velocity * ANGULAR_INTEGRAL_COEFF;
                         if (_restrict_integral && Vector3.Dot(_captured_angular_velocity, local_angular_acceleration) < 0.0f /*&& local_angular_acceleration.LengthSquared() > 0.0003f*/)
-                            rotational_integral_change *= Vector3.IsZeroVector(_last_control_dir, 0.01f);
-                        if (_rotational_integral.LengthSquared() < 10.0f || Vector3.Dot(_rotational_integral, rotational_integral_change) < 0.0f)
-                            _rotational_integral += rotational_integral_change;
+                            trim_change *= Vector3.IsZeroVector(_last_control_dir, 0.01f);
+                        if (_current_trim.LengthSquared() < 10.0f || Vector3.Dot(_current_trim, trim_change) < 0.0f)
+                            _current_trim += trim_change;
                     }
 
-                    // Force update of "fixed" inverse rotation matrix when angle exceeds 11 degrees
-                    if (Vector3.Dot(_inverse_world_rotation_fixed.Forward, inverse_world_rotation.Forward) < 0.98f)
+                    // Force update of "fixed" inverse rotation matrix when angle exceeds 11 degrees 
+                    // or speed is low (decopling ID from current ship orientation isn't needed at low velocities)
+                    if (_speed <= 20.0f || Vector3.Dot(_inverse_world_rotation_fixed.Forward, inverse_world_rotation.Forward) < 0.98f)
                         _inverse_world_rotation_fixed = inverse_world_rotation;
                 }
                 else
@@ -460,14 +497,15 @@ namespace thruster_torque_and_differential_throttling
                     _restrict_integral            = _enable_integral = true;
                     _inverse_world_rotation_fixed = inverse_world_rotation;
                 }
-                _desired_angular_velocity = -_local_angular_velocity + _rotational_integral 
-                    + ANGULAR_DERIVATIVE_COEFF * local_angular_acceleration;
+                _desired_angular_velocity = -_local_angular_velocity + _current_trim + ANGULAR_DERIVATIVE_COEFF * local_angular_acceleration;
+                if (_local_angular_velocity.LengthSquared() < 0.0001f || _current_trim.LengthSquared() > _trim_settings[control_scheme].LengthSquared())
+                    _trim_settings[control_scheme] = _current_trim;
             }
             //screen_text("", String.Format("DAV = {0}, RI = {1}, LAC = {2}", _desired_angular_velocity.Length(), _restrict_integral, Vector3.Dot(_captured_angular_velocity, local_angular_acceleration)), 16);
 
             _new_mode_is_steady_velocity    = _all_engines_off = true;
             _allow_extra_linear_opposition |= _gyro_control.ControlTorque.LengthSquared() > 0.0001f || _local_angular_velocity.LengthSquared() > 0.0003f;
-            opposite_dir                    = 3;
+            int opposite_dir                = 3;
             thruster_info cur_thruster_info;
             for (int dir_index = 0; dir_index < 6; ++dir_index)
             {
@@ -497,7 +535,7 @@ namespace thruster_torque_and_differential_throttling
             normalise_thrust();
             apply_thrust_settings();
             // Ensure that steady-velocity mode won't cause integral to wind up out of control
-            _new_mode_is_steady_velocity &= _rotational_integral.LengthSquared() < 0.01f;
+            _new_mode_is_steady_velocity &= _current_trim.LengthSquared() < 0.01f;
         }
 
         private static void set_thruster_reference_vector(thruster_info thruster, Vector3 reference)
