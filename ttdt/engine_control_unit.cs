@@ -409,7 +409,7 @@ namespace thruster_torque_and_differential_throttling
         void normalise_thrust()
         {
             int   opposite_dir = 3;
-            float new_force_ratio;
+            float new_force_ratio, linear_force = 0.0f, requested_force = 0.0f;
 
             for (int dir_index = 0; dir_index < 3; ++dir_index)
             {
@@ -418,15 +418,23 @@ namespace thruster_torque_and_differential_throttling
                     new_force_ratio = (_actual_force[opposite_dir] + _requested_force[dir_index]) / _actual_force[dir_index];
                     foreach (var cur_thruster in _controlled_thrusters[dir_index])
                         cur_thruster.Value.current_setting *= new_force_ratio;
+                    _actual_force[dir_index] *= new_force_ratio;
                 }
                 if (_actual_force[opposite_dir] >= 1.0f && _actual_force[opposite_dir] - _requested_force[opposite_dir] > _actual_force[dir_index])
                 {
                     new_force_ratio = (_actual_force[dir_index] + _requested_force[opposite_dir]) / _actual_force[opposite_dir];
                     foreach (var cur_thruster in _controlled_thrusters[opposite_dir])
                         cur_thruster.Value.current_setting *= new_force_ratio;
+                    _actual_force[opposite_dir] *= new_force_ratio;
                 }
+
+                linear_force    += Math.Abs(_actual_force[dir_index] - _actual_force[opposite_dir]);
+                requested_force += _requested_force[dir_index] + _requested_force[opposite_dir];
                 ++opposite_dir;
             }
+
+            if (requested_force >= 1.0f)
+                screen_text("", string.Format("thrust efficiency: {0} %", (int) (linear_force / requested_force * 100.0f + 0.5f)), 16);
         }
 
         private void handle_thrust_control()
@@ -480,7 +488,7 @@ namespace thruster_torque_and_differential_throttling
                     else
                     {
                         Vector3 trim_change = _local_angular_velocity * ANGULAR_INTEGRAL_COEFF;
-                        if (_restrict_integral && Vector3.Dot(_captured_angular_velocity, local_angular_acceleration) < 0.0f /*&& local_angular_acceleration.LengthSquared() > 0.0003f*/)
+                        if (_restrict_integral && Vector3.Dot(_captured_angular_velocity, local_angular_acceleration) < 0.0f && local_angular_acceleration.LengthSquared() > 3.0E-6f)
                             trim_change *= Vector3.IsZeroVector(_last_control_dir, 0.01f);
                         if (_current_trim.LengthSquared() < 10.0f || Vector3.Dot(_current_trim, trim_change) < 0.0f)
                             _current_trim += trim_change;
@@ -498,8 +506,10 @@ namespace thruster_torque_and_differential_throttling
                     _inverse_world_rotation_fixed = inverse_world_rotation;
                 }
                 _desired_angular_velocity = -_local_angular_velocity + _current_trim + ANGULAR_DERIVATIVE_COEFF * local_angular_acceleration;
-                if (_local_angular_velocity.LengthSquared() < 0.0001f || _current_trim.LengthSquared() > _trim_settings[control_scheme].LengthSquared())
+                if (_current_trim.LengthSquared() > _trim_settings[control_scheme].LengthSquared())
                     _trim_settings[control_scheme] = _current_trim;
+                else
+                    _trim_settings[control_scheme] = 0.5f * (_trim_settings[control_scheme] + _current_trim);
             }
             //screen_text("", String.Format("DAV = {0}, RI = {1}, LAC = {2}", _desired_angular_velocity.Length(), _restrict_integral, Vector3.Dot(_captured_angular_velocity, local_angular_acceleration)), 16);
 
