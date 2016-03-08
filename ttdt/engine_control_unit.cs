@@ -438,22 +438,12 @@ namespace thruster_torque_and_differential_throttling
             }
         }
 
-        private void handle_thrust_control()
+        private void adjust_trim_setting(Matrix inverse_world_rotation)
         {
             const float ANGULAR_INTEGRAL_COEFF = -0.1f, ANGULAR_DERIVATIVE_COEFF = -0.01f;
 
-            // Using a "fixed" (it changes orientation only when the player steers a ship) inverse rotation matrix here to 
-            // prevent Dutch Roll-like tendencies at high speeds
-            Vector3 local_linear_velocity = Vector3.Transform(_grid.Physics.LinearVelocity, _inverse_world_rotation_fixed);
-
-            Matrix inverse_world_rotation      = _inverse_world_transform.GetOrientation();
-            Vector3 local_gravity              = Vector3.Transform(_grid.Physics.Gravity            , inverse_world_rotation);
-            _local_angular_velocity            = Vector3.Transform(_grid.Physics.AngularVelocity    , inverse_world_rotation);
             Vector3 local_angular_acceleration = (_local_angular_velocity - _prev_angular_velocity) / MyEngineConstants.UPDATE_STEP_SIZE_IN_SECONDS;
             _prev_angular_velocity             = _local_angular_velocity;
-            _speed = local_linear_velocity.Length();
-
-            initialise_linear_controls(local_linear_velocity, local_gravity);
 
             if (_gyro_control.ControlTorque.LengthSquared() > 0.0001f)
             {
@@ -464,9 +454,9 @@ namespace thruster_torque_and_differential_throttling
                     _desired_angular_velocity = _local_angular_velocity * (Vector3.One - trim_vector) + _gyro_control.ControlTorque * 2.0f;
                 else
                     _desired_angular_velocity = _gyro_control.ControlTorque * 15.0f;
-                _desired_angular_velocity     += _current_trim + ANGULAR_DERIVATIVE_COEFF * local_angular_acceleration;
-                _enable_integral               = _restrict_integral = false;
-                _inverse_world_rotation_fixed  = inverse_world_rotation;
+                _desired_angular_velocity    += _current_trim + ANGULAR_DERIVATIVE_COEFF * local_angular_acceleration;
+                _enable_integral              = _restrict_integral = false;
+                _inverse_world_rotation_fixed = inverse_world_rotation;
                 if (_current_trim.LengthSquared() >= 1.0f)
                     _control_authority_exceeded = true;
             }
@@ -519,6 +509,21 @@ namespace thruster_torque_and_differential_throttling
                 }
                 _desired_angular_velocity = -_local_angular_velocity + _current_trim + ANGULAR_DERIVATIVE_COEFF * local_angular_acceleration;
             }
+        }
+
+        private void handle_thrust_control()
+        {
+            // Using a "fixed" (it changes orientation only when the player steers a ship) inverse rotation matrix here to 
+            // prevent Dutch Roll-like tendencies at high speeds
+            Vector3 local_linear_velocity = Vector3.Transform(_grid.Physics.LinearVelocity, _inverse_world_rotation_fixed);
+
+            Matrix inverse_world_rotation = _inverse_world_transform.GetOrientation();
+            Vector3 local_gravity         = Vector3.Transform(_grid.Physics.Gravity, inverse_world_rotation);
+            _local_angular_velocity       = Vector3.Transform(_grid.Physics.AngularVelocity, inverse_world_rotation);
+            _speed = local_linear_velocity.Length();
+
+            initialise_linear_controls(local_linear_velocity, local_gravity);
+            adjust_trim_setting(inverse_world_rotation);
             //screen_text("", String.Format("DAV = {0:F3}", _desired_angular_velocity.Length()), 16, controlled_only: true);
 
             _new_mode_is_steady_velocity    = _all_engines_off = true;
