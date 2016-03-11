@@ -89,6 +89,7 @@ namespace thruster_torque_and_differential_throttling
 
         public static void handle_4Hz()
         {
+            engine_control_unit.refresh_ship_controller_4Hz();
             foreach (var cur_ECU in grids_with_ECU.Values)
                 cur_ECU.handle_4Hz();
         }
