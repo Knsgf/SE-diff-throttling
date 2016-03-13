@@ -203,8 +203,8 @@ namespace thruster_torque_and_differential_throttling
                     torque -= Vector3.Normalize(torque) * _max_gyro_torque;
                 */
             }
-            _torque = Vector3.Transform(_torque, _grid.WorldMatrix.GetOrientation());
-            _grid.Physics.AddForce(MyPhysicsForceType.APPLY_WORLD_IMPULSE_AND_WORLD_ANGULAR_IMPULSE, Vector3.Zero, null, _torque);
+            Vector3 world_torque = Vector3.Transform(_torque, _grid.WorldMatrix.GetOrientation());
+            _grid.Physics.AddForce(MyPhysicsForceType.APPLY_WORLD_IMPULSE_AND_WORLD_ANGULAR_IMPULSE, Vector3.Zero, null, world_torque);
         }
 
         #endregion
@@ -314,11 +314,13 @@ namespace thruster_torque_and_differential_throttling
                             _allow_extra_linear_opposition = true;
                     }
 
-                    if (_stabilisation_off || !_enable_linear_integral[dir_index])
+                    if (!_enable_linear_integral[dir_index])
                         _linear_integral[dir_index] = 0.0f;
                     else
                     {
                         _linear_integral[dir_index] += INTEGRAL_CONSTANT * (_local_linear_velocity_inv[dir_index] - _local_linear_velocity_inv[opposite_dir]);
+                        if (_stabilisation_off)
+                            _linear_integral[dir_index] -= INTEGRAL_CONSTANT * 0.5f;
                         if (_linear_integral[dir_index] < 0.0f)
                             _linear_integral[dir_index] = 0.0f;
                     }
@@ -927,9 +929,9 @@ namespace thruster_torque_and_differential_throttling
             else if (!_status_displayed)
             {
                 if (_grid.HasMainCockpit())
-                    screen_info("Active stabilisation is enabled. Uncheck \"Main Cockpit\" to disable", 10000, MyFontEnum.White, controlled_only: true);
+                    screen_info("Active stabilisation is enabled. Uncheck \"Main Cockpit\" to disable", 5000, MyFontEnum.White, controlled_only: true);
                 else
-                    screen_info("Active stabilisation is disabled. Set up a main cockpit to enable", 10000, MyFontEnum.White, controlled_only: true);
+                    screen_info("Active stabilisation is disabled. Set up a main cockpit to enable", 5000, MyFontEnum.White, controlled_only: true);
                 _status_displayed = true;
             }
         }
