@@ -30,7 +30,6 @@ namespace thruster_torque_and_differential_throttling
             public Vector3    static_moment;
             public Vector3    CoM_offset;
             public Vector3    reference_vector;
-            //public Vector3    reference_normalised;
             public thrust_dir nozzle_direction;
             public float      current_setting;
             public int        prev_setting;
@@ -65,15 +64,15 @@ namespace thruster_torque_and_differential_throttling
         private MatrixD   _inverse_world_transform;
         private Matrix    _inverse_world_rotation_fixed;
         private FieldInfo _max_gyro_torque_ref, _gyro_override_ref;
-        private float     _max_gyro_torque = 0.0f, _max_gyro_torque_squared = 0.0f;
-        private float     _spherical_moment_of_inertia, _specific_moment_of_inertia;  // Grid's approximate spherical moment of inertia divided by mean radius
+        private float     _max_gyro_torque = 0.0f, _max_gyro_torque_squared = 0.0f, _spherical_moment_of_inertia;
+        private int       _thrust_reduction, _displayed_reduction = 0;
 
         private Vector3 _local_angular_velocity, _prev_angular_velocity = Vector3.Zero, _torque;
         private float   _speed;
         private bool    _current_mode_is_steady_velocity = false, _new_mode_is_steady_velocity = false;
         private Vector3 _desired_angular_velocity, _captured_angular_velocity, _current_trim = Vector3.Zero, _last_trim = Vector3.Zero, _last_control_dir = Vector3.Zero;
         private sbyte   _last_control_scheme = -1;
-        private bool    _enable_integral = true, _restrict_integral = false, _stabilisation_off, _control_authority_exceeded = false;
+        private bool    _enable_integral = true, _restrict_integral = false, _stabilisation_off, _all_engines_off = false, _control_limit_reached = false;
 
         private  bool   _allow_extra_linear_opposition = false, _integral_cleared = false;
         private  bool[] _enable_linear_integral    = {  true,  true,  true,  true,  true,  true };
@@ -156,9 +155,7 @@ namespace thruster_torque_and_differential_throttling
         private void check_override_on_uncontrolled()
         {
             for (int dir_index = 0; dir_index < 6; ++dir_index)
-            {
                 _dampers_disabled[dir_index] = false;
-            }
             foreach (var cur_thruster in _uncontrolled_thrusters)
             {
                 if (cur_thruster.Key.ThrustOverride > cur_thruster.Value.max_force * 0.01f)
@@ -226,10 +223,11 @@ namespace thruster_torque_and_differential_throttling
             const float MIN_OVERRIDE = 1.001f;
 
             float         setting;
+            int           setting_int;
             bool          enforce_min_override;
             thruster_info cur_thruster_info;
 
-            if (reset_all_thrusters && _stabilisation_off)
+            if (reset_all_thrusters && _all_engines_off)
                 return;
 
             for (int dir_index = 0; dir_index < 6; ++dir_index)
@@ -251,21 +249,21 @@ namespace thruster_torque_and_differential_throttling
                     setting = cur_thruster_info.current_setting * 100.0f;
                     if (enforce_min_override && setting < MIN_OVERRIDE)
                         setting = MIN_OVERRIDE;
-                    if ((int) setting != cur_thruster_info.prev_setting)
+                    setting_int = (int) Math.Ceiling(setting);
+                    if (setting_int != cur_thruster_info.prev_setting)
                     {
                         cur_thruster.Key.SetValueFloat("Override", setting);
-                        cur_thruster_info.prev_setting = (int) setting;
+                        cur_thruster_info.prev_setting = setting_int;
                     }
                 }
             }
 
-            if (reset_all_thrusters)
-                _stabilisation_off = true;
+            _all_engines_off = reset_all_thrusters;
         }
 
         private sbyte initialise_linear_controls(Vector3 local_linear_velocity_vector, Vector3 local_gravity_vector)
         {
-            const float DAMPING_CONSTANT = -2.0f, INTEGRAL_CONSTANT = 0.05f;
+            const float DAMPING_CONSTANT = -2.0f, INTEGRAL_CONSTANT = 0.05f, DESCENDING_SPEED = 0.5f;
 
             _allow_extra_linear_opposition = _thrust_control.ControlThrust.LengthSquared() > 0.75f * 0.75f;
             decompose_vector(_thrust_control.ControlThrust, _control_vector);
@@ -287,9 +285,9 @@ namespace thruster_torque_and_differential_throttling
             {
                 _integral_cleared      = false;
                 Vector3 linear_damping = local_linear_velocity_vector * DAMPING_CONSTANT - (_stabilisation_off ? (local_gravity_vector * 0.9f) : local_gravity_vector);
-                decompose_vector(linear_damping * _grid.Physics.Mass, _braking_vector);
-                decompose_vector(-local_gravity_vector        , _local_gravity_inv        );
-                decompose_vector(-local_linear_velocity_vector, _local_linear_velocity_inv);
+                decompose_vector(linear_damping * _grid.Physics.Mass,            _braking_vector);
+                decompose_vector(              -local_gravity_vector,         _local_gravity_inv);
+                decompose_vector(      -local_linear_velocity_vector, _local_linear_velocity_inv);
                 for (int dir_index = 0; dir_index < 6; ++dir_index)
                     _control_vector_copy[dir_index] = _control_vector[dir_index];
 
@@ -320,7 +318,7 @@ namespace thruster_torque_and_differential_throttling
                     {
                         _linear_integral[dir_index] += INTEGRAL_CONSTANT * (_local_linear_velocity_inv[dir_index] - _local_linear_velocity_inv[opposite_dir]);
                         if (_stabilisation_off)
-                            _linear_integral[dir_index] -= INTEGRAL_CONSTANT * 0.5f;
+                            _linear_integral[dir_index] -= INTEGRAL_CONSTANT * DESCENDING_SPEED;
                         if (_linear_integral[dir_index] < 0.0f)
                             _linear_integral[dir_index] = 0.0f;
                     }
@@ -361,11 +359,11 @@ namespace thruster_torque_and_differential_throttling
 
         private void adjust_thrust_for_steering(int cur_dir, int opposite_dir, Vector3 desired_angular_velocity)
         {
-            const float THRUST_INCREASE_SENSITIVITY = 0.5f, THRUST_REDUCTION_SENSITIVITY = 0.5f;
-            const float MIN_LINEAR_OPPOSITION = 0.1f, MAX_LINEAR_OPPOSITION = 0.5f;
+            const float DAMPING_CONSTANT = 5.0f;
+            const float MIN_LINEAR_OPPOSITION = 0.1f, MAX_LINEAR_OPPOSITION = 0.3f;
 
             Vector3       angular_velocity_diff = desired_angular_velocity - _local_angular_velocity;
-            float         desired_setting, max_linear_opposition;
+            float         max_linear_opposition, damping = DAMPING_CONSTANT * _grid.Physics.Mass / _max_force[cur_dir];
             thruster_info cur_thruster_info;
 
             _actual_force[cur_dir] = 0.0f;
@@ -376,6 +374,7 @@ namespace thruster_torque_and_differential_throttling
                 max_linear_opposition += MAX_LINEAR_OPPOSITION * (1.0f - _control_vector[opposite_dir]);
             if (_max_force[opposite_dir] < _max_force[cur_dir])
                 max_linear_opposition *= _max_force[opposite_dir] / _max_force[cur_dir];
+
             foreach (var cur_thruster in _controlled_thrusters[cur_dir])
             {
                 if (!cur_thruster.Key.IsWorking)
@@ -386,9 +385,7 @@ namespace thruster_torque_and_differential_throttling
                 decompose_vector(Vector3.Cross(angular_velocity_diff, cur_thruster_info.reference_vector), _linear_component);
                 if (_linear_component[cur_dir] > 0.0f)
                 {
-                    desired_setting = THRUST_INCREASE_SENSITIVITY * _linear_component[cur_dir] * _specific_moment_of_inertia / _max_force[cur_dir];
-                    //desired_setting = (THRUST_INCREASE_SENSITIVITY * _linear_component[cur_dir] * _grid.Physics.Mass / _max_force[cur_dir]);
-                    cur_thruster_info.current_setting += desired_setting;
+                    cur_thruster_info.current_setting += damping * _linear_component[cur_dir];
                     if (_control_vector[opposite_dir] > 0.01f)
                     {
                         // Limit thrusters opposing player/ID linear input
@@ -400,9 +397,7 @@ namespace thruster_torque_and_differential_throttling
                 }
                 else if (_linear_component[opposite_dir] > 0.0f)
                 {
-                    desired_setting = THRUST_REDUCTION_SENSITIVITY * _linear_component[opposite_dir] * _specific_moment_of_inertia / _max_force[cur_dir];
-                    //desired_setting = THRUST_REDUCTION_SENSITIVITY * _linear_component[opposite_dir] * _grid.Physics.Mass / _max_force[cur_dir];
-                    cur_thruster_info.current_setting -= desired_setting;
+                    cur_thruster_info.current_setting -= damping * _linear_component[opposite_dir];
                     if (cur_thruster_info.current_setting < 0.0f)
                         cur_thruster_info.current_setting = 0.0f;
                     else if (_control_vector[opposite_dir] > 0.01f && cur_thruster_info.current_setting > max_linear_opposition)
@@ -446,12 +441,13 @@ namespace thruster_torque_and_differential_throttling
                 ++opposite_dir;
             }
 
-            if (linear_force >= 0.01f * _grid.Physics.Mass * _grid.Physics.Mass)
+            if (linear_force < 0.05f * _grid.Physics.Mass * _grid.Physics.Mass || requested_force < linear_force)
+                _thrust_reduction = 0;
+            else
             {
-                linear_force    = (float) Math.Sqrt(   linear_force);
-                requested_force = (float) Math.Sqrt(requested_force);
-                screen_info(string.Format("Thrust reduction: {0} %", (int) ((1.0f - linear_force / requested_force) * 100.0f + 0.5f)), 
-                    16, MyFontEnum.White, controlled_only: true);
+                linear_force      = (float) Math.Sqrt(   linear_force);
+                requested_force   = (float) Math.Sqrt(requested_force);
+                _thrust_reduction = (  int) ((1.0f - linear_force / requested_force) * 100.0f + 0.5f);
             }
         }
 
@@ -474,15 +470,17 @@ namespace thruster_torque_and_differential_throttling
                     _current_trim = (_current_trim + ANGULAR_INTEGRAL_COEFF * _local_angular_velocity
                         + ANGULAR_DERIVATIVE_COEFF * _torque / _spherical_moment_of_inertia) * trim_vector;
                 }
-                if (_local_angular_velocity.LengthSquared() > 0.01f)
+                if (_local_angular_velocity.LengthSquared() > 0.01f && Vector3.Dot(_local_angular_velocity, _last_control_dir) >= 0.0f)
                     _desired_angular_velocity = _local_angular_velocity * (Vector3.One - trim_vector) + _gyro_control.ControlTorque * 2.0f;
                 else
                     _desired_angular_velocity = _gyro_control.ControlTorque * 15.0f;
                 _desired_angular_velocity    += _current_trim + ANGULAR_DERIVATIVE_COEFF * local_angular_acceleration;
+                if (Vector3.Dot(_desired_angular_velocity, _last_trim) > 0.0f)
+                    _desired_angular_velocity += (Vector3.One - trim_vector) * _last_trim;
                 _enable_integral              = _restrict_integral = false;
                 _inverse_world_rotation_fixed = inverse_world_rotation;
                 if (_current_trim.LengthSquared() >= MAX_TRIM * MAX_TRIM)
-                    _control_authority_exceeded = true;
+                    _control_limit_reached = true;
             }
             else
             {
@@ -507,7 +505,7 @@ namespace thruster_torque_and_differential_throttling
                         if (_current_trim.LengthSquared() < MAX_TRIM * MAX_TRIM || Vector3.Dot(_current_trim, trim_change) < 0.0f)
                             _current_trim += trim_change;
                         else
-                            _control_authority_exceeded = true;
+                            _control_limit_reached = true;
                         if (_last_trim.LengthSquared() < _current_trim.LengthSquared())
                             _last_trim = _current_trim;
                         else
@@ -591,8 +589,7 @@ namespace thruster_torque_and_differential_throttling
 
         private static void set_thruster_reference_vector(thruster_info thruster, Vector3 reference)
         {
-            thruster.reference_vector     = reference;
-            //thruster.reference_normalised = (reference.LengthSquared() > 0.01f) ? Vector3.Normalize(reference) : Vector3.Zero;
+            thruster.reference_vector = reference;
         }
 
         private void update_reference_vectors_for_accelerating_mode()
@@ -782,16 +779,14 @@ namespace thruster_torque_and_differential_throttling
             Vector3 grid_dim             = (_grid.Max - _grid.Min) * _grid.GridSize;
             float grid_volume            = Math.Abs(grid_dim.X * grid_dim.Y * grid_dim.Z);
             float reference_radius       = (float) Math.Pow(grid_volume / (4.0 / 3.0 * Math.PI), 1.0 / 3.0);
-            _specific_moment_of_inertia  = 0.4f * _grid.Physics.Mass * reference_radius;
-            _spherical_moment_of_inertia = _specific_moment_of_inertia * reference_radius;
-            log_ECU_action("calc_spherical_moment_of_inertia", string.Format("volume = {0} m3, radius = {1} m, SMoI = {2} t*m", grid_volume, reference_radius, _specific_moment_of_inertia / 1000.0f));
+            _spherical_moment_of_inertia = 0.4f * _grid.Physics.Mass * reference_radius * reference_radius;
+            log_ECU_action("calc_spherical_moment_of_inertia", string.Format("volume = {0} m3, radius = {1} m, SMoI = {2} t*m^2", grid_volume, reference_radius, _spherical_moment_of_inertia / 1000.0f));
         }
 
         private void on_block_added(MySlimBlock block)
         {
             if (_disposed)
                 throw new ObjectDisposedException("ECU for grid \"" + _grid.DisplayName + "\" [" + _grid.EntityId.ToString() + "] didn't deregister event handlers.");
-            //calc_spherical_moment_of_inertia();
             if (block.FatBlock != null)
             {
                 log_ECU_action("on_block_added", block.ToString());
@@ -805,7 +800,6 @@ namespace thruster_torque_and_differential_throttling
         {
             if (_disposed)
                 throw new ObjectDisposedException("ECU for grid \"" + _grid.DisplayName + "\" [" + _grid.EntityId.ToString() + "] didn't deregister event handlers.");
-            //calc_spherical_moment_of_inertia();
             if (block.FatBlock != null)
             {
                 log_ECU_action("on_block_removed", block.ToString());
@@ -893,8 +887,13 @@ namespace thruster_torque_and_differential_throttling
                     calculate_and_apply_torque();
                 }
             }
-            if (_control_authority_exceeded)
-                screen_info("WARNING: Control authority exceeded", 16, MyFontEnum.Red, controlled_only: true);
+            if (_control_limit_reached)
+                screen_info("WARNING: Control limit reached", 16, MyFontEnum.Red, controlled_only: true);
+            if (_displayed_reduction >= 5)
+            {
+                MyFontEnum font_colour = (_displayed_reduction <= 30) ? MyFontEnum.White : MyFontEnum.Red;
+                screen_info(string.Format("Thrust reduction: {0} %", _displayed_reduction), 16, font_colour, controlled_only: true);
+            }
         }
 
         public void handle_4Hz()
@@ -919,10 +918,11 @@ namespace thruster_torque_and_differential_throttling
                 _current_mode_is_steady_velocity = _new_mode_is_steady_velocity;
             }
             refresh_real_max_forces();
-            _gyro_override_active       = (float)   _gyro_override_ref.GetValue(_gyro_control) > 0.01f;
-            _max_gyro_torque            = (float) _max_gyro_torque_ref.GetValue(_gyro_control);
-            _max_gyro_torque_squared    = _max_gyro_torque * _max_gyro_torque;
-            _control_authority_exceeded = false;
+            _gyro_override_active    = (float)   _gyro_override_ref.GetValue(_gyro_control) > 0.01f;
+            _max_gyro_torque         = (float) _max_gyro_torque_ref.GetValue(_gyro_control);
+            _max_gyro_torque_squared = _max_gyro_torque * _max_gyro_torque;
+            _control_limit_reached   = false;
+            _displayed_reduction     = _thrust_reduction;
 
             if (__current_controller == null || __current_controller.CubeGrid != _grid)
                 _status_displayed = false;
