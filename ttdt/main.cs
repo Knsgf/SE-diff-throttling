@@ -42,7 +42,7 @@ namespace thruster_torque_and_differential_throttling
 
         private void on_entity_added(MyEntity entity)
         {
-            log_event("on_entity_added", entity);
+            //log_event("on_entity_added", entity);
             var cube_grid = entity as MyCubeGrid;
             if (cube_grid != null)
                 grid_manager.add_grid(cube_grid);
@@ -50,7 +50,7 @@ namespace thruster_torque_and_differential_throttling
 
         private void on_entity_deleted(MyEntity entity)
         {
-            log_event("on_entity_deleted", entity);
+            //log_event("on_entity_deleted", entity);
             var cube_grid = entity as MyCubeGrid;
             if (cube_grid != null)
                 grid_manager.remove_grid(cube_grid);
@@ -58,7 +58,7 @@ namespace thruster_torque_and_differential_throttling
 
         private void on_entity_removed(MyEntity entity)
         {
-            log_event("on_entity_removed", entity);
+            //log_event("on_entity_removed", entity);
             var cube_grid = entity as MyCubeGrid;
             if (cube_grid != null)
                 grid_manager.remove_grid(cube_grid);
@@ -68,7 +68,7 @@ namespace thruster_torque_and_differential_throttling
 
         public void Dispose()
         {
-            MyLog.Default.WriteLine("TT&DT main.Dispose()");
+            //MyLog.Default.WriteLine("TT&DT main.Dispose()");
 
             MyEntities.OnEntityAdd    -= on_entity_added;
             MyEntities.OnEntityDelete -= on_entity_deleted;
@@ -77,7 +77,7 @@ namespace thruster_torque_and_differential_throttling
 
         public void Init(object gameInstance)
         {
-            MyLog.Default.WriteLine("TT&DT main.Init()");
+            //MyLog.Default.WriteLine("TT&DT main.Init()");
 
             MyEntities.OnEntityAdd    += on_entity_added;
             MyEntities.OnEntityDelete += on_entity_deleted;

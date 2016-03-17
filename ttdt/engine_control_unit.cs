@@ -593,8 +593,8 @@ namespace thruster_torque_and_differential_throttling
                 _requested_force[dir_index] = 0.0f;
                 foreach (var cur_thruster in _controlled_thrusters[dir_index])
                 {
-                    _stabilisation_off  = false;
-                    cur_thruster_info = cur_thruster.Value;
+                    _stabilisation_off = false;
+                    cur_thruster_info  = cur_thruster.Value;
                     if (!cur_thruster.Key.IsWorking || cur_thruster_info.actual_max_force < 1.0f)
                         cur_thruster_info.current_setting = 0.0f;
                     else
@@ -854,18 +854,13 @@ namespace thruster_torque_and_differential_throttling
             _inverse_world_rotation_fixed = _inverse_world_transform.GetOrientation();
             calc_spherical_moment_of_inertia();
 
-            Type grid_systems_type = _grid.GridSystems.GetType();
-            PropertyInfo gyro_system_ref = grid_systems_type.GetProperty("GyroSystem", BindingFlags.Instance | BindingFlags.NonPublic);
-            _gyro_control = (MyGridGyroSystem) gyro_system_ref.GetValue(_grid.GridSystems);
-            Debug.Assert(_gyro_control != null, "TT&DT engine_control_unit ERROR: gyro_control == null");
+            _gyro_control         = _grid.GridSystems.GyroSystem;
             Type gyro_system_type = _gyro_control.GetType();
             _max_gyro_torque_ref  = gyro_system_type.GetField("m_maxGyroForce"    , BindingFlags.Instance | BindingFlags.NonPublic);
             _gyro_override_ref    = gyro_system_type.GetField("m_maxOverrideForce", BindingFlags.Instance | BindingFlags.NonPublic);
 
-            PropertyInfo terminal_system_ref = grid_systems_type.GetProperty("TerminalSystem", BindingFlags.Instance | BindingFlags.NonPublic);
-            var grid_control = (IMyGridTerminalSystem)terminal_system_ref.GetValue(_grid.GridSystems);
-            Debug.Assert(grid_control != null, "TT&DT engine_control_unit ERROR: grid_control == null");
-            var thruster_list  = new List<IMyTerminalBlock>();
+            IMyGridTerminalSystem grid_control = _grid.GridSystems.TerminalSystem;
+            var thruster_list = new List<IMyTerminalBlock>();
             grid_control.GetBlocksOfType<IMyThrust>(thruster_list);
             foreach (var cur_thruster in thruster_list)
                 assign_thruster((MyThrust) cur_thruster);
