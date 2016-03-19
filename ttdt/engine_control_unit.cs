@@ -247,6 +247,9 @@ namespace thruster_torque_and_differential_throttling
 
             for (int dir_index = 0; dir_index < 6; ++dir_index)
             {
+                if (reset_all_thrusters)
+                    _current_trim[dir_index] = _last_trim[dir_index] = 0.0f;
+
                 enforce_min_override = _control_vector[dir_index] > 0.01f && _speed > 0.1f;
                 foreach (var cur_thruster in _controlled_thrusters[dir_index])
                 {
