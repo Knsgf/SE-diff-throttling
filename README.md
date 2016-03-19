@@ -1,8 +1,8 @@
 # Description
-This highly experimental (read: sloppily written) plugin adds engine torque, engine rotational controls 
+This highly experimental (read: sloppily written) plugin adds engine torque, engine steering 
 and automatic differential throttling to Space Engineers.
 
-## Notes:
+## Notes
 * This plugin is **single-player only**,
 * On landed and docked ships, either all engines should be switched off or "Main Cockpit" should be unchecked. Failure to do so may result in sudden jolt upon lift-off or undocking,
 * Because this plugin uses thrust override, it is not recommended to mix throttled and unthrotttled engines on the same side of a ship,
@@ -35,6 +35,10 @@ The plugin is case-insensitive, so [RCS] and [rcs] will both work.
 ### Main cockpit
 The system behaves differently depending on whether main cockpit is set:
 * If main cockpit is checked, then the system will actively try to hold established attitude. While in gravity, the ship will hover in place,
-* If main cockpit is not checked, then the system will only reduce spin instead of nullifying it. This is useful for wheeled vehicles.
+* If main cockpit is not checked, then the system will only reduce spin instead of nullifying it; this is useful e.g. for wheeled vehicles.
    While in gravity, the ship will slowly descend.
    
+# Acknowledgements
+Special thanks to:
+   Agnar, Blitz4532, bos187, bruin_o9er, busboy999, Creeping Wolf, DaMasta, deadok, DreamAssembly!, Dwarf-Lord Pangolin, Dynamite Knight, Gusset_Tugger, 
+   Idartacus [Farstar Gamer], izzik, Space_Engineers7, trents2cool, Tristavius, TumbleTV

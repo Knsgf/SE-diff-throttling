@@ -299,7 +299,7 @@ namespace thruster_torque_and_differential_throttling
             else
             {
                 _integral_cleared      = false;
-                Vector3 linear_damping = local_linear_velocity_vector * DAMPING_CONSTANT - (_stabilisation_off ? (local_gravity_vector * 0.9f) : local_gravity_vector);
+                Vector3 linear_damping = local_linear_velocity_vector * DAMPING_CONSTANT - (_stabilisation_off ? (local_gravity_vector * 0.8f) : local_gravity_vector);
                 decompose_vector(linear_damping * _grid.Physics.Mass,            _braking_vector);
                 decompose_vector(              -local_gravity_vector,         _local_gravity_inv);
                 decompose_vector(      -local_linear_velocity_vector, _local_linear_velocity_inv);
@@ -580,7 +580,7 @@ namespace thruster_torque_and_differential_throttling
             if (update_inverse_world_matrix || _speed <= 20.0f || Vector3.Dot(_inverse_world_rotation_fixed.Forward, inverse_world_rotation.Forward) < 0.98f)
                 _inverse_world_rotation_fixed = inverse_world_rotation;
 
-            //screen_text("", string.Format("DAV = {0:F3}", desired_angular_velocity.Length()), 16, controlled_only: true);
+            screen_text("", string.Format("DAV = {0:F3}", desired_angular_velocity.Length()), 16, controlled_only: true);
 
             _new_mode_is_steady_velocity    = _stabilisation_off = true;
             _allow_extra_linear_opposition |= _gyro_control.ControlTorque.LengthSquared() > 0.0001f || _local_angular_velocity.LengthSquared() > 0.0003f;
@@ -700,7 +700,7 @@ namespace thruster_torque_and_differential_throttling
                 {
                     if (   !cur_thruster.IsWorking 
                         || cur_direction[cur_thruster].actual_max_force < 0.01f * cur_direction[cur_thruster].max_force 
-                        || !cur_thruster.CustomName.ToString().ToUpper().Contains("[RCS]"))
+                        /*|| !cur_thruster.CustomName.ToString().ToUpper().Contains("[RCS]")*/)
                     {
                         cur_thruster.SetValueFloat("Override", 0.0f);
                         _max_force[dir_index] -= cur_direction[cur_thruster].max_force;
@@ -718,7 +718,7 @@ namespace thruster_torque_and_differential_throttling
             {
                 if (   cur_thruster.IsWorking 
                     && _uncontrolled_thrusters[cur_thruster].actual_max_force > 0.01f * _uncontrolled_thrusters[cur_thruster].max_force 
-                    && cur_thruster.CustomName.ToString().ToUpper().Contains("[RCS]"))
+                    /*&& cur_thruster.CustomName.ToString().ToUpper().Contains("[RCS]")*/)
                 {
                     dir_index = (int) _uncontrolled_thrusters[cur_thruster].nozzle_direction;
                     _controlled_thrusters[dir_index].Add(cur_thruster, _uncontrolled_thrusters[cur_thruster]);
@@ -805,11 +805,11 @@ namespace thruster_torque_and_differential_throttling
 
         private void calc_spherical_moment_of_inertia()
         {
-            Vector3 grid_dim             = (_grid.Max - _grid.Min) * _grid.GridSize;
+            Vector3 grid_dim             = (_grid.Max - _grid.Min + Vector3I.One) * _grid.GridSize;
             float grid_volume            = Math.Abs(grid_dim.X * grid_dim.Y * grid_dim.Z);
             float reference_radius       = (float) Math.Pow(grid_volume / (4.0 / 3.0 * Math.PI), 1.0 / 3.0);
             _spherical_moment_of_inertia = 0.4f * _grid.Physics.Mass * reference_radius * reference_radius;
-            log_ECU_action("calc_spherical_moment_of_inertia", string.Format("volume = {0} m3, radius = {1} m, SMoI = {2} t*m^2", grid_volume, reference_radius, _spherical_moment_of_inertia / 1000.0f));
+            log_ECU_action("calc_spherical_moment_of_inertia", string.Format("volume = {0} m3, radius = {1} m, SMoI = {2} t*m2", grid_volume, reference_radius, _spherical_moment_of_inertia / 1000.0f));
         }
 
         private void on_block_added(MySlimBlock block)
