@@ -580,8 +580,6 @@ namespace thruster_torque_and_differential_throttling
             if (update_inverse_world_matrix || _speed <= 20.0f || Vector3.Dot(_inverse_world_rotation_fixed.Forward, inverse_world_rotation.Forward) < 0.98f)
                 _inverse_world_rotation_fixed = inverse_world_rotation;
 
-            screen_text("", string.Format("DAV = {0:F3}", desired_angular_velocity.Length()), 16, controlled_only: true);
-
             _new_mode_is_steady_velocity    = _stabilisation_off = true;
             _allow_extra_linear_opposition |= _gyro_control.ControlTorque.LengthSquared() > 0.0001f || _local_angular_velocity.LengthSquared() > 0.0003f;
             int opposite_dir                = 3;
@@ -700,7 +698,7 @@ namespace thruster_torque_and_differential_throttling
                 {
                     if (   !cur_thruster.IsWorking 
                         || cur_direction[cur_thruster].actual_max_force < 0.01f * cur_direction[cur_thruster].max_force 
-                        /*|| !cur_thruster.CustomName.ToString().ToUpper().Contains("[RCS]")*/)
+                        || !cur_thruster.CustomName.ToString().ToUpper().Contains("[RCS]"))
                     {
                         cur_thruster.SetValueFloat("Override", 0.0f);
                         _max_force[dir_index] -= cur_direction[cur_thruster].max_force;
@@ -718,7 +716,7 @@ namespace thruster_torque_and_differential_throttling
             {
                 if (   cur_thruster.IsWorking 
                     && _uncontrolled_thrusters[cur_thruster].actual_max_force > 0.01f * _uncontrolled_thrusters[cur_thruster].max_force 
-                    /*&& cur_thruster.CustomName.ToString().ToUpper().Contains("[RCS]")*/)
+                    && cur_thruster.CustomName.ToString().ToUpper().Contains("[RCS]"))
                 {
                     dir_index = (int) _uncontrolled_thrusters[cur_thruster].nozzle_direction;
                     _controlled_thrusters[dir_index].Add(cur_thruster, _uncontrolled_thrusters[cur_thruster]);
