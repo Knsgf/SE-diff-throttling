@@ -459,7 +459,7 @@ namespace thruster_torque_and_differential_throttling
                 ++opposite_dir;
             }
 
-            if (linear_force < 0.05f * _grid.Physics.Mass * _grid.Physics.Mass || requested_force < linear_force)
+            if ((!_thrust_control.DampenersEnabled || _speed < 1.0f) && _thrust_control.ControlThrust.LengthSquared() < 0.0001f)
                 _thrust_reduction = 0;
             else
             {
@@ -906,6 +906,7 @@ namespace thruster_torque_and_differential_throttling
                     && _grid.Physics.AngularVelocity.LengthSquared() < 1.0E-6f && _grid.Physics.Gravity.LengthSquared() < 0.01f
                     && (!_thrust_control.DampenersEnabled || _grid.Physics.LinearVelocity.LengthSquared() < 0.01f))
                 {
+                    _thrust_reduction = 0;
                     apply_thrust_settings(reset_all_thrusters: true);
                 }
                 else

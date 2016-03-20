@@ -40,5 +40,6 @@ The system behaves differently depending on whether main cockpit is set:
    
 # Acknowledgements
 Special thanks to:
-   Agnar, Blitz4532, bos187, bruin_o9er, busboy999, Creeping Wolf, DaMasta, deadok, DreamAssembly!, Dwarf-Lord Pangolin, Dynamite Knight, Gusset_Tugger, 
-   Idartacus [Farstar Gamer], izzik, Space_Engineers7, trents2cool, Tristavius, TumbleTV
+   Agnar, Berun, Blitz4532, bos187, bruin_o9er, busboy999, Creeping Wolf, DaMasta, Dan2D3D, deadok, DreamAssembly!, Dwarf-Lord Pangolin, 
+   Dynamite Knight, EvanBaxter, grimsage, Gusset_Tugger, Idartacus [Farstar Gamer], IIN8II, izzik, Lord Commissar, M3rchantOfD3ath,
+   [MPW] ColTeH, Space_Engineers7, trents2cool, Tristavius, TumbleTV
