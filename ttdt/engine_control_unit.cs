@@ -195,7 +195,7 @@ namespace thruster_torque_and_differential_throttling
                 float gyro_limit = _gyro_control.ResourceSink.SuppliedRatio * (_max_gyro_torque - _gyro_control.Torque.Length());
                 if (gyro_limit > 1.0f)
                 {
-                    Vector3 gyro_torque = 10.0f * (_spherical_moment_of_inertia / _max_gyro_torque) * (desired_angular_velocity - _local_angular_velocity);
+                    Vector3 gyro_torque = 5.0f * (_spherical_moment_of_inertia / _max_gyro_torque) * (desired_angular_velocity - _local_angular_velocity);
                     if (gyro_torque.LengthSquared() > 1.0f)
                         gyro_torque.Normalize();
                     gyro_torque     *= gyro_limit;
@@ -375,7 +375,7 @@ namespace thruster_torque_and_differential_throttling
             return result;
         }
 
-        private void adjust_thrust_for_steering(int cur_dir, int opposite_dir, Vector3 desired_angular_velocity)
+        private void adjust_thrust_for_steering(int cur_dir, int opposite_dir, Vector3 desired_angular_velocity, float thrust_limit)
         {
             const float DAMPING_CONSTANT = 5.0f;
             const float MIN_LINEAR_OPPOSITION = 0.1f, MAX_LINEAR_OPPOSITION = 0.3f;
@@ -387,6 +387,9 @@ namespace thruster_torque_and_differential_throttling
             _actual_force[cur_dir] = 0.0f;
             if (_max_force[cur_dir] <= 0.0f)
                 return;
+
+            if (thrust_limit < 0.0f)
+                thrust_limit = 0.0f;
             max_linear_opposition = MIN_LINEAR_OPPOSITION * _control_vector[opposite_dir];
             if (_allow_extra_linear_opposition)
                 max_linear_opposition += MAX_LINEAR_OPPOSITION * (1.0f - _control_vector[opposite_dir]);
@@ -400,6 +403,7 @@ namespace thruster_torque_and_differential_throttling
                 cur_thruster_info = cur_thruster.Value;
                 if (cur_thruster_info.actual_max_force < 1.0f)
                     continue;
+
                 decompose_vector(Vector3.Cross(angular_velocity_diff, cur_thruster_info.reference_vector), _linear_component);
                 if (_linear_component[cur_dir] > 0.0f)
                 {
@@ -416,6 +420,8 @@ namespace thruster_torque_and_differential_throttling
                 else if (_linear_component[opposite_dir] > 0.0f)
                 {
                     cur_thruster_info.current_setting -= damping * _linear_component[opposite_dir];
+                    if (cur_thruster_info.current_setting > thrust_limit)
+                        cur_thruster_info.current_setting = thrust_limit;
                     if (cur_thruster_info.current_setting < 0.0f)
                         cur_thruster_info.current_setting = 0.0f;
                     else if (_control_vector[opposite_dir] > 0.01f && cur_thruster_info.current_setting > max_linear_opposition)
@@ -469,9 +475,9 @@ namespace thruster_torque_and_differential_throttling
             }
         }
 
-        private bool adjust_trim_setting(sbyte control_scheme, out Vector3 desired_angular_velocity)
+        private bool adjust_trim_setting(sbyte control_scheme, out Vector3 desired_angular_velocity, out float thrust_limit)
         {
-            const float ANGULAR_INTEGRAL_COEFF = -0.05f, ANGULAR_DERIVATIVE_COEFF = -0.01f, MAX_TRIM = 1.0f;
+            const float ANGULAR_INTEGRAL_COEFF = -0.05f, ANGULAR_DERIVATIVE_COEFF = -0.01f, MAX_TRIM = 1.0f, THRUST_CUTOFF_TRIM = 0.9f;
 
             bool    update_inverse_world_matrix = false;
             float   trim_change;
@@ -482,6 +488,7 @@ namespace thruster_torque_and_differential_throttling
             decompose_vector(               _local_angular_velocity,     _angular_velocity);
             decompose_vector(            local_angular_acceleration, _angular_acceleration);
             decompose_vector(_torque / _spherical_moment_of_inertia, _nominal_acceleration);
+            thrust_limit     = 1.0f;
             int opposite_dir = 3;
             for (int dir_index = 0; dir_index < 6; ++dir_index)
             {
@@ -555,6 +562,8 @@ namespace thruster_torque_and_differential_throttling
                     _steering_output[dir_index] = _angular_velocity[opposite_dir] + _current_trim[dir_index];
                 }
 
+                if (thrust_limit > 1.0f - (1.0f / THRUST_CUTOFF_TRIM) * _current_trim[dir_index])
+                    thrust_limit = 1.0f - (1.0f / THRUST_CUTOFF_TRIM) * _current_trim[dir_index];
                 if (++opposite_dir >= 6)
                     opposite_dir = 0;
             }
@@ -562,6 +571,8 @@ namespace thruster_torque_and_differential_throttling
             recompose_vector(_steering_output, out desired_angular_velocity);
             desired_angular_velocity += ANGULAR_DERIVATIVE_COEFF * local_angular_acceleration;
             _last_control_scheme      = control_scheme;
+            if (thrust_limit < 0.0f)
+                thrust_limit = 0.0f;
             return update_inverse_world_matrix;
         }
 
@@ -576,8 +587,9 @@ namespace thruster_torque_and_differential_throttling
             _local_angular_velocity       = Vector3.Transform(_grid.Physics.AngularVelocity, inverse_world_rotation);
             _speed = local_linear_velocity.Length();
 
+            float thrust_limit;
             sbyte control_scheme              = initialise_linear_controls(local_linear_velocity, local_gravity);
-            bool  update_inverse_world_matrix = adjust_trim_setting(control_scheme, out desired_angular_velocity);
+            bool  update_inverse_world_matrix = adjust_trim_setting(control_scheme, out desired_angular_velocity, out thrust_limit);
             // Update fixed inverse rotation matrix when angle exceeds 11 degrees or speed is low 
             // (decoupling inertia dampers' axes from ship orientation isn't needed at low velocities)
             if (update_inverse_world_matrix || _speed <= 20.0f || Vector3.Dot(_inverse_world_rotation_fixed.Forward, inverse_world_rotation.Forward) < 0.98f)
@@ -609,7 +621,7 @@ namespace thruster_torque_and_differential_throttling
                 if (_gyro_override_active || _dampers_disabled[dir_index])
                     _actual_force[dir_index] = _requested_force[dir_index];
                 else
-                    adjust_thrust_for_steering(dir_index, opposite_dir, desired_angular_velocity);
+                    adjust_thrust_for_steering(dir_index, opposite_dir, desired_angular_velocity, thrust_limit);
                 if (++opposite_dir >= 6)
                     opposite_dir = 0;
             }
