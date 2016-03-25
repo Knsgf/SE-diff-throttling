@@ -670,7 +670,10 @@ namespace thruster_torque_and_differential_throttling
             _speed = local_linear_velocity.Length();
 
             float thrust_limit;
-            _stabilisation_off                = !_grid.HasMainCockpit();
+            _stabilisation_off = true;
+            foreach (var cur_direction in _controlled_thrusters)
+                _stabilisation_off &= cur_direction.Count == 0;
+            _stabilisation_off |= !_grid.HasMainCockpit();
             sbyte control_scheme              = initialise_linear_controls(local_linear_velocity, local_gravity);
             bool  update_inverse_world_matrix = adjust_trim_setting(control_scheme, out desired_angular_velocity, out thrust_limit);
             // Update fixed inverse rotation matrix when angle exceeds 11 degrees or speed is low 
