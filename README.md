@@ -14,8 +14,8 @@ and automatic differential throttling to Space Engineers.
    https://github.com/Knsgf/SE-diff-throttling/blob/master/ttdt.dll 
    and save it into **Steam\steamapps\common\SpaceEngineers\Bin64\** directory 
    (you may need administrator rights to do so),
-2. In Steam, right-click on Space Engineers in your library and choose **Properties**,
-3. Click **SET LAUNCH OPTIONS...**, then type the following text without quote marks:
+2. In Steam, right-click on **Space Engineers** in your library and choose **Properties**,
+3. Click **SET LAUNCH OPTIONS...**, then type the following text:
    **-plugin ttdt.dll**,
 4. Click **OK** and close **Properties** window. The plugin will be automatically loaded whenever you start SE.
 
@@ -24,7 +24,7 @@ and automatic differential throttling to Space Engineers.
 2. Click **SET LAUNCH OPTIONS...** and remove the following text:
    **-plugin ttdt.dll**,
 3. Click **OK** and close **Properties** window,
-4. Delete ttdt.dll in your **Steam\steamapps\common\SpaceEngineers\Bin64\** folder.
+4. Delete **ttdt.dll** in your **Steam\steamapps\common\SpaceEngineers\Bin64\** folder.
 
 ## Usage
 By default, all thrusters exert torque on a ship, but do not participate in steering or stabilisation of the vessel.
@@ -36,6 +36,13 @@ The system behaves differently depending on whether main cockpit is set:
 * If main cockpit is checked, then the system will actively try to hold established attitude. While in gravity, the ship will hover in place,
 * If main cockpit is not checked, then the system will only reduce spin instead of nullifying it; this is useful e.g. for wheeled vehicles.
    While in gravity, the ship will slowly descend.
+   
+#### Thrust calibration (source only -- the binary will be updated on the next Thursday)
+In addition to usual dynamic stabiliser, which adjusts thrusters in real time in response to angular velocity, it is now possible to 
+pre-calibrate thrust levels by adding **[STAT]** tag to thrusters' names. The primary advantage of static calibration is less sway during flight 
+as well as better feedback on usefulness of engines; however ships with calibrated thrusters have a tendency to accelerate and slow down 
+worse than same vessels relying solely on dynamic control. It is also possible for calibration to fail (e.g. when all engines are only on one side of CoM);
+the system will revert to dynamic solution in the latter case.
 
 ## Compiling the source
 1. Download and install Visual Studio 2015,

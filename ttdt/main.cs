@@ -11,20 +11,20 @@ namespace thruster_torque_and_differential_throttling
     [MySessionComponentDescriptor(MyUpdateOrder.BeforeSimulation)]
     public class core_clock: MySessionComponentBase
     {
-        private int counter15 = 15, counter8 = 8;
+        private int _counter15 = 15, _counter8 = 8;
 
         public override void UpdateBeforeSimulation()
         {
             base.UpdateBeforeSimulation();
             grid_manager.handle_60Hz();
-            if (--counter15 <= 0)
+            if (--_counter15 <= 0)
             {
                 grid_manager.handle_4Hz();
-                counter15 = 15;
-                if (--counter8 <= 0)
+                _counter15 = 15;
+                if (--_counter8 <= 0)
                 {
                     grid_manager.handle_2s_period();
-                    counter8 = 8;
+                    _counter8 = 8;
                 }
             }
         }
