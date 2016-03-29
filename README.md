@@ -1,10 +1,10 @@
 # Description
-This highly experimental (read: sloppily written) plugin adds engine torque, engine steering 
+This proof-of-concept (read: sloppily written) plugin adds thruster torque, engine steering 
 and automatic differential throttling to Space Engineers.
 
 ## Notes
 * This plugin is **single-player only**,
-* On landed and docked ships, either all engines should be switched off or **main cockpit** should be unchecked. Failure to do so may result in sudden jolt upon lift-off or undocking,
+* On landed and docked ships, either all engines and gyroscopes should be switched off or **main cockpit** should be unchecked. Failure to do so may result in sudden jolt upon lift-off or undocking,
 * Because this plugin uses thrust override, it is not recommended to mix throttled and unthrotttled engines on the same side of a ship,
 * **BEWARE OF LANDING GEAR AND ROTOR/PISTON SAFETY LOCKS!** Planet gravity affecting a carrier tends to bug out when smaller ship locks itself to it; 
   the same thing also happens when rotors and pistons are locked.
@@ -40,15 +40,15 @@ The system behaves differently depending on whether main cockpit is set:
 #### Thrust calibration (source only -- the binary will be updated on the next Thursday)
 In addition to usual dynamic stabiliser, which adjusts thrusters in real time in response to angular velocity, it is now possible to 
 pre-calibrate thrust levels by adding **[STAT]** tag to thrusters' names. The primary advantage of static calibration is less sway during flight 
-as well as better feedback on usefulness of engines; however ships with calibrated thrusters have a tendency to accelerate and slow down 
-worse than same vessels relying solely on dynamic control. It is also possible for calibration to fail (e.g. when all engines are only on one side of CoM);
+as well as better feedback on thruster balance; however ships with calibrated engines tend to accelerate and slow down worse than same 
+vessels relying solely on dynamic control. It is also possible for calibration to fail (e.g. when all engines are only on one side of CoM);
 the system will revert to dynamic solution in the latter case.
 
 ## Compiling the source
 1. Download and install Visual Studio 2015,
 2. Download and unpack the repository,
-3. Change ReferencePath in **ttdt\ttdt.csproj.user** to point to your **Steam\steamapps\common\SpaceEngineers\Bin64\** folder,
-4. Set build to **Release** and compile the solution in Visual Studio,
+3. Change **ReferencePath** in **ttdt\ttdt.csproj.user** to point to your **Steam\steamapps\common\SpaceEngineers\Bin64\** folder,
+4. Open the solution in Visual Studio, set build to **Release** and compile it,
 5. Copy **ttdt.dll** into **Steam\steamapps\common\SpaceEngineers\Bin64\** directory.
 
 # Acknowledgements
