@@ -36,8 +36,15 @@ The system behaves differently depending on whether main cockpit is set:
 * If main cockpit is checked, then the system will actively try to hold established attitude. While in gravity, the ship will hover in place,
 * If main cockpit is not checked, then the system will only reduce spin instead of nullifying it; this is useful e.g. for wheeled vehicles.
    While in gravity, the ship will slowly descend.
+
+#### Remotely controlled drones without cockpit
+On RC drone the stabilisation behaves as follows:
+* When a drone is under player's control and **Show horizon and altitude** box in RC block is checked, then the system will actively try to hold established attitude. 
+  While in gravity, the drone will hover in place,
+* When a drone is not under player's control or when **Show horizon and altitude** is not checked, then the system will only reduce spin instead of nullifying it.
+  While in gravity, the drone will slowly descend.
    
-#### Thrust calibration (source only -- the binary will be updated on the next Thursday)
+#### Thrust calibration
 In addition to usual dynamic stabiliser, which adjusts thrusters in real time in response to angular velocity, it is now possible to 
 pre-calibrate thrust levels by adding **[STAT]** tag to thrusters' names. The primary advantage of static calibration is less sway during flight 
 as well as better feedback on thruster balance; however ships with calibrated engines tend to accelerate and slow down worse than same 
