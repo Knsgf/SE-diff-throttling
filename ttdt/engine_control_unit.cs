@@ -156,7 +156,7 @@ namespace thruster_torque_and_differential_throttling
         //private float[] _actual_force     = new float[6];
         private  bool[] _dampers_disabled = { false, false, false, false, false, false };
 
-        private bool      _disposed = false, _gyro_override_active = false, _status_displayed = false, _calibration_scheduled = true;
+        private bool      _disposed = false, _gyro_override_active = false, _status_displayed = false, _RC_status_displayed = false, _calibration_scheduled = true;
         private Vector3D  _grid_CoM_location;
         private MatrixD   _inverse_world_transform;
         private Matrix    _inverse_world_rotation_fixed;
@@ -175,7 +175,7 @@ namespace thruster_torque_and_differential_throttling
         //private float[] _nominal_acceleration = new float[6];
         private float[] _current_trim         = new float[6];
         private float[] _last_trim            = new float[6];
-        private Vector3 _local_angular_velocity, _prev_angular_velocity = Vector3.Zero, _torque;
+        private Vector3 _local_angular_velocity, _prev_angular_velocity = Vector3.Zero, _torque, _manual_thrust, _manual_rotation;
         private float   _speed;
         private bool    _current_mode_is_steady_velocity = false, _new_mode_is_steady_velocity = false;
         private sbyte   _last_control_scheme = -1;
@@ -294,7 +294,7 @@ namespace thruster_torque_and_differential_throttling
             }
 
             //_are_gyroscopes_saturated = _max_gyro_torque < 1.0f || torque.LengthSquared() / _max_gyro_torque_squared >= 0.75f * 0.75f;
-            if (!_stabilisation_off && _gyro_control.ControlTorque.LengthSquared() <= 0.0001f)
+            if (!_stabilisation_off && _manual_rotation.LengthSquared() <= 0.0001f)
             {
                 float gyro_limit = _gyro_control.ResourceSink.SuppliedRatio * (_max_gyro_torque - _gyro_control.Torque.Length());
                 if (gyro_limit > 1.0f)
@@ -451,8 +451,8 @@ namespace thruster_torque_and_differential_throttling
         {
             const float DAMPING_CONSTANT = -2.0f, INTEGRAL_CONSTANT = 0.05f, DESCENDING_SPEED = 0.5f;
 
-            _allow_extra_linear_opposition = _thrust_control.ControlThrust.LengthSquared() > 0.75f * 0.75f;
-            decompose_vector(_thrust_control.ControlThrust, __control_vector);
+            _allow_extra_linear_opposition = _manual_thrust.LengthSquared() > 0.75f * 0.75f;
+            decompose_vector(_manual_thrust, __control_vector);
             sbyte control_scheme = get_current_control_scheme();
 
             if (!_thrust_control.DampenersEnabled)
@@ -632,7 +632,7 @@ namespace thruster_torque_and_differential_throttling
                 ++opposite_dir;
             }
 
-            if ((!_thrust_control.DampenersEnabled || _speed < 1.0f) && _thrust_control.ControlThrust.LengthSquared() < 0.0001f)
+            if ((!_thrust_control.DampenersEnabled || _speed < 1.0f) && _manual_thrust.LengthSquared() < 0.0001f)
                 _thrust_reduction = 0;
             else
             {
@@ -651,7 +651,7 @@ namespace thruster_torque_and_differential_throttling
             Vector3 local_angular_acceleration  = (_local_angular_velocity - _prev_angular_velocity) / MyEngineConstants.UPDATE_STEP_SIZE_IN_SECONDS;
             _prev_angular_velocity = _local_angular_velocity;
 
-            decompose_vector(           _gyro_control.ControlTorque,       __steering_input);
+            decompose_vector(                      _manual_rotation,       __steering_input);
             decompose_vector(               _local_angular_velocity,     __angular_velocity);
             decompose_vector(            local_angular_acceleration, __angular_acceleration);
             decompose_vector(_torque / _spherical_moment_of_inertia, __nominal_acceleration);
@@ -758,7 +758,8 @@ namespace thruster_torque_and_differential_throttling
             _stabilisation_off = true;
             foreach (var cur_direction in _controlled_thrusters)
                 _stabilisation_off &= cur_direction.Count == 0;
-            _stabilisation_off = !_grid.HasMainCockpit() || _stabilisation_off && _max_gyro_torque < 0.0001f * _spherical_moment_of_inertia;
+            bool RC_stabilisation = __current_controller is MyRemoteControl && __current_controller.CubeGrid == _grid && __current_controller.HorizonIndicatorEnabled;
+            _stabilisation_off = (!_grid.HasMainCockpit() && !RC_stabilisation) || _stabilisation_off && _max_gyro_torque < 0.0001f * _spherical_moment_of_inertia;
             sbyte control_scheme              = initialise_linear_controls(local_linear_velocity, local_gravity);
             bool  update_inverse_world_matrix = adjust_trim_setting(control_scheme, out desired_angular_velocity, out thrust_limit);
             // Update fixed inverse rotation matrix when angle exceeds 11 degrees or speed is low 
@@ -769,7 +770,7 @@ namespace thruster_torque_and_differential_throttling
             screen_text("", string.Format("DAV = {0:F3}", desired_angular_velocity.Length()), 16, controlled_only: true);
 
             _new_mode_is_steady_velocity    = true; 
-            _allow_extra_linear_opposition |= _gyro_control.ControlTorque.LengthSquared() > 0.0001f || _local_angular_velocity.LengthSquared() > 0.0003f;
+            _allow_extra_linear_opposition |= _manual_rotation.LengthSquared() > 0.0001f || _local_angular_velocity.LengthSquared() > 0.0003f;
             int opposite_dir                = 3;
             thruster_info cur_thruster_info;
             for (int dir_index = 0; dir_index < 6; ++dir_index)
@@ -1108,7 +1109,18 @@ namespace thruster_torque_and_differential_throttling
             _thrust_control          = _grid.Components.Get<MyEntityThrustComponent>();
             if (!_grid.IsStatic && _grid.Physics != null && _thrust_control != null)
             {
-                if (   _gyro_control.ControlTorque.LengthSquared() < 0.0001f && _thrust_control.ControlThrust.LengthSquared() < 0.0001f
+                if (__current_controller != null && __current_controller.CubeGrid == _grid)
+                {
+                    Matrix cockpit_matrix;
+                    __current_controller.Orientation.GetMatrix(out cockpit_matrix);
+                    _manual_thrust     = Vector3.Clamp(Vector3.Transform(__current_controller.MoveIndicator, cockpit_matrix), -Vector3.One, Vector3.One);
+                    _manual_rotation.X = __current_controller.RotationIndicator.X * (-0.05f);
+                    _manual_rotation.Y = __current_controller.RotationIndicator.Y * (-0.05f);
+                    _manual_rotation.Z = __current_controller.RollIndicator       * (-0.2f );
+                    _manual_rotation   = Vector3.Transform(_manual_rotation, cockpit_matrix);
+                }
+
+                if (   _manual_rotation.LengthSquared() < 0.0001f && _manual_thrust.LengthSquared() < 0.0001f
                     && _grid.Physics.AngularVelocity.LengthSquared() < 1.0E-6f && _grid.Physics.Gravity.LengthSquared() < 0.01f
                     && (!_thrust_control.DampenersEnabled || _grid.Physics.LinearVelocity.LengthSquared() < 0.01f))
                 {
@@ -1150,38 +1162,68 @@ namespace thruster_torque_and_differential_throttling
             _max_gyro_torque         = (float) _max_gyro_torque_ref.GetValue(_gyro_control);
             _max_gyro_torque_squared = _max_gyro_torque * _max_gyro_torque;
 
-            if (_control_limit_reached != _control_limit_message_on)
+            if (__current_controller == null || __current_controller.CubeGrid != _grid)
             {
-                _control_limit_message_on = _control_limit_reached;
-                if (!_control_limit_reached)
+                if (_control_limit_message_on)
+                {
                     MyHud.Notifications.Remove(__control_limit_message);
-                else
-                    MyHud.Notifications.Add(__control_limit_message);
-            }
-            if ((_thrust_reduction >= 5) != _thrust_reduction_message_on)
-            {
-                _thrust_reduction_message_on = _thrust_reduction >= 5;
+                    _control_limit_message_on = false;
+                }
                 if (_thrust_reduction_message_on)
-                    MyHud.Notifications.Add(_thrust_reduction_message);
-                else
+                {
                     MyHud.Notifications.Remove(_thrust_reduction_message);
+                    _thrust_reduction_message_on = false;
+                }
             }
-            if (_thrust_reduction_message_on)
+            else
             {
-                _thrust_reduction_message.Font = (_thrust_reduction > 30) ? MyFontEnum.Red : MyFontEnum.White;
-                _thrust_reduction_message.SetTextFormatArguments(_thrust_reduction);
+                if (_control_limit_reached != _control_limit_message_on)
+                {
+                    _control_limit_message_on = _control_limit_reached;
+                    if (!_control_limit_reached)
+                        MyHud.Notifications.Remove(__control_limit_message);
+                    else
+                        MyHud.Notifications.Add(__control_limit_message);
+                }
+                if ((_thrust_reduction >= 5) != _thrust_reduction_message_on)
+                {
+                    _thrust_reduction_message_on = _thrust_reduction >= 5;
+                    if (_thrust_reduction_message_on)
+                        MyHud.Notifications.Add(_thrust_reduction_message);
+                    else
+                        MyHud.Notifications.Remove(_thrust_reduction_message);
+                }
+                if (_thrust_reduction_message_on)
+                {
+                    _thrust_reduction_message.Font = (_thrust_reduction > 30) ? MyFontEnum.Red : MyFontEnum.White;
+                    _thrust_reduction_message.SetTextFormatArguments(_thrust_reduction);
+                }
             }
             _control_limit_reached = false;
 
-            if (__current_controller == null || __current_controller.CubeGrid != _grid)
-                _status_displayed = false;
-            else if (!_status_displayed)
+            if (!(__current_controller is MyCockpit) && !(__current_controller is MyRemoteControl) || __current_controller.CubeGrid != _grid)
+                _status_displayed = _RC_status_displayed = false;
+            else
             {
-                if (_grid.HasMainCockpit())
-                    screen_info("Active stabilisation is enabled. Uncheck \"Main Cockpit\" to disable", 5000, MyFontEnum.White, controlled_only: true);
-                else
-                    screen_info("Active stabilisation is disabled. Set up a main cockpit to enable", 5000, MyFontEnum.White, controlled_only: true);
-                _status_displayed = true;
+                if (__current_controller is MyRemoteControl)
+                {
+                    if (!_RC_status_displayed)
+                    {
+                        if (__current_controller.HorizonIndicatorEnabled)
+                            screen_info("Active RC stabilisation is enabled. Uncheck \"Show horizon and altitude\" to disable", 5000, MyFontEnum.White, controlled_only: false);
+                        else
+                            screen_info("Active RC stabilisation is disabled. Tick \"Show horizon and altitude\" to enable", 5000, MyFontEnum.White, controlled_only: false);
+                        _RC_status_displayed = true;
+                    }
+                }
+                else if (!_status_displayed)
+                {
+                    if (_grid.HasMainCockpit())
+                        screen_info("Active stabilisation is enabled. Uncheck \"Main Cockpit\" to disable", 5000, MyFontEnum.White, controlled_only: true);
+                    else
+                        screen_info("Active stabilisation is disabled. Set up a main cockpit to enable", 5000, MyFontEnum.White, controlled_only: true);
+                    _status_displayed = true;
+                }
             }
         }
 
