@@ -1,4 +1,4 @@
-**Notice:** this release has been superseded by workshop mode available here:
+**Notice:** this release has been superseded by workshop mod available here:
 http://steamcommunity.com/sharedfiles/filedetails/?id=660333966
 
 
