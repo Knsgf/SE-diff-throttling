@@ -365,9 +365,9 @@ namespace thruster_torque_and_differential_throttling
                 is_solution_good = __linear_solver.calculate_solution(__thruster_infos.Count);
                 for (int index = 0; index < __thruster_infos.Count; ++index)
                 {
-                    __thruster_infos[index].thrust_limit = (__linear_solver.items[index].max_value > 0.0f) 
+                    __thruster_infos[index].thrust_limit = (is_solution_good && __linear_solver.items[index].max_value > 0.0f) 
                         ? (__linear_solver.items[index].result / __linear_solver.items[index].max_value) : 1.0f;
-                    __thruster_infos[index].enable_limit &= is_solution_good;
+                    //__thruster_infos[index].enable_limit &= is_solution_good;
                     log_ECU_action("perform_linear_calibration", string.Format("{0} kN ({1})", __linear_solver.items[index].result / 1000.0f, cur_direction));
                 }
 

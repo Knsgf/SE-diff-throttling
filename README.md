@@ -1,4 +1,10 @@
-# Description
+**Notice:** this porject has been superseded by workshop mode available here:
+http://steamcommunity.com/sharedfiles/filedetails/?id=660333966
+
+
+
+
+# Original description
 This proof-of-concept (read: sloppily written) plugin adds thruster torque, engine steering 
 and automatic differential throttling to Space Engineers.
 
